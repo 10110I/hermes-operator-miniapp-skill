@@ -1,0 +1,10 @@
+  64e2a0a4da3d [active]
+    Name:      Backup
+    Schedule:  every 7200m
+    Next run:  2026-09-25T12:34:14.549329+00:00
+    Script:    backup.sh
+
+  0e23e4155a78 [active]
+    Name:      Daily job
+    Schedule:  0 1 * * *
+    Next run:  2026-09-21T01:00:00+00:00

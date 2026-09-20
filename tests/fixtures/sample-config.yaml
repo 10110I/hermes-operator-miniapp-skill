@@ -1,0 +1,49 @@
+time_zone: Europe/Moscow
+telegram:
+  bot_token_env: TELEGRAM_BOT_TOKEN
+  allowed_users: [1002597417]
+  max_age_seconds: 86400
+services:
+  - id: fixture-service
+    label: Fixture Service
+    type: command
+    enabled: true
+    command: python3 -c "print('ok')"
+    success_regex: ok
+subscription_trackers:
+  - id: json-provider
+    label: JSON Provider
+    provider: json-provider
+    type: command_json
+    enabled: true
+    command: python3 tests/fixtures/json_usage.py
+    accounts_path: accounts
+    account_label_path: label
+    status_path: status
+    plan_path: plan
+    windows_path: windows
+    window_label_path: label
+    used_percent_path: used_percent
+    remaining_percent_path: remaining_percent
+    reset_text_path: reset_text
+  - id: regex-provider
+    label: Regex Provider
+    provider: regex-provider
+    type: command_regex
+    enabled: true
+    command: python3 tests/fixtures/regex_usage.py
+    account_start_regex: '(?m)^Account:\s*(?P<label>.+)$'
+    default_status: ok
+    status_regex: 'status:\s*(?P<status>ok|limited|reauth|error)'
+    plan_regex: 'plan:\s*(?P<plan>.+)$'
+    window_patterns:
+      - key: five_hour
+        label: 5 часов
+        regex: '5h:\s*(?P<used>\d+)%\s*used\s*/\s*(?P<remaining>\d+)%\s*remaining\s*reset:\s*(?P<reset>.+)$'
+      - key: weekly
+        label: Неделя
+        regex: 'week:\s*(?P<used>\d+)%\s*used\s*/\s*(?P<remaining>\d+)%\s*remaining\s*reset:\s*(?P<reset>.+)$'
+cron:
+  enabled: true
+  command: python3 -c "print(open('tests/fixtures/cron.txt', encoding='utf-8').read())"
+  timeout_seconds: 10

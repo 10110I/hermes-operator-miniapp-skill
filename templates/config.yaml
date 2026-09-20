@@ -1,0 +1,95 @@
+# Hermes Operator Mini App example config.
+# Copy to ~/.hermes/operator-miniapp/config.yaml and edit.
+# Secrets are referenced by environment variable name only; do not put tokens here.
+
+time_zone: Europe/Moscow
+
+telegram:
+  # The server reads the token from this env var at runtime.
+  bot_token_env: TELEGRAM_BOT_TOKEN
+  allowed_users:
+    - 123456789
+  max_age_seconds: 86400
+
+services:
+  - id: github
+    label: GitHub
+    type: github_cli
+    enabled: true
+    access: [repo/auth]
+
+  - id: tailscale
+    label: Tailscale
+    type: tailscale
+    enabled: true
+    access: [device/network]
+
+  - id: google_drive
+    label: Google Drive
+    type: command
+    enabled: false
+    command: python ~/.hermes/skills/productivity/google-workspace/scripts/google_api.py drive search --limit 1
+    success_regex: .+
+    access: [drive.readonly]
+
+subscription_trackers:
+  # Best option: a command that prints normalized JSON.
+  # Shape expected by default:
+  # {"accounts":[{"label":"Account", "status":"ok", "plan":"Pro", "windows":[{"label":"5 hours", "used_percent":42, "remaining_percent":58, "reset_text":"reset in 2h"}]}]}
+  - id: example-json-provider
+    label: Example JSON Provider
+    provider: example
+    type: command_json
+    enabled: false
+    command: ~/.hermes/operator-miniapp/example-provider-usage --json
+    accounts_path: accounts
+    account_label_path: label
+    status_path: status
+    plan_path: plan
+    windows_path: windows
+    window_label_path: label
+    used_percent_path: used_percent
+    remaining_percent_path: remaining_percent
+    reset_text_path: reset_text
+
+  # Fallback: parse an existing text report with named regex groups.
+  # This works for custom scripts, SaaS CLIs, or copied provider usage reports.
+  - id: example-regex-provider
+    label: Example Regex Provider
+    provider: example
+    type: command_regex
+    enabled: false
+    command: ~/.hermes/operator-miniapp/example-provider-usage
+    account_start_regex: '(?m)^Account:\s*(?P<label>.+)$'
+    default_status: ok
+    status_regex: 'status:\s*(?P<status>ok|limited|reauth|error)'
+    plan_regex: 'plan:\s*(?P<plan>.+)$'
+    window_patterns:
+      - key: five_hour
+        label: 5 часов
+        regex: '5h:\s*(?P<used>\d+)%\s*used\s*/\s*(?P<remaining>\d+)%\s*remaining(?:\s*reset:\s*(?P<reset>.+))?'
+      - key: weekly
+        label: Неделя
+        regex: 'week:\s*(?P<used>\d+)%\s*used\s*/\s*(?P<remaining>\d+)%\s*remaining(?:\s*reset:\s*(?P<reset>.+))?'
+
+  # Manual placeholder: useful before an automated provider adapter exists.
+  - id: manual-provider
+    label: Manual Provider
+    provider: manual
+    type: manual
+    enabled: false
+    accounts:
+      - label: Account 1
+        status: ok
+        plan: Pro
+        windows:
+          - key: monthly
+            label: Месяц
+            used_percent: 10
+            remaining_percent: 90
+            reset_text: обновляется вручную
+
+cron:
+  enabled: true
+  command: hermes cron list --all
+  timeout_seconds: 60
