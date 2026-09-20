@@ -120,6 +120,17 @@ def test_command_json_tracker_normalizes_windows():
     }
 
 
+def test_subscription_limit_labels_use_compact_mobile_layout():
+    html = app.MINIAPP_HTML
+
+    assert "limit-head" in html
+    assert "limit-stats" in html
+    assert "status-badge" in html
+    assert "использовано" in html
+    assert "потрачено" not in html
+    assert "barlabel" not in html
+
+
 def test_command_regex_tracker_parses_text_report():
     config = app.load_config(ROOT / "tests" / "fixtures" / "sample-config.yaml")
     tracker = config["subscription_trackers"][1]
