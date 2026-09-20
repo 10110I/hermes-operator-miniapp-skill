@@ -73,6 +73,33 @@ def test_oauth_token_service_reports_missing_and_limited_scope(tmp_path):
     assert "/auth/drive" in service["caption"]
 
 
+def test_static_service_reports_configured_gateway():
+    services = app.collect_services({"services": [{"id": "gateway_telegram", "label": "Telegram Gateway", "type": "static", "status": "ok", "caption": "configured in Hermes gateway", "access": ["gateway"]}]})
+
+    assert services == [{"id": "gateway_telegram", "label": "Telegram Gateway", "status": "ok", "caption": "configured in Hermes gateway", "access": ["gateway"]}]
+
+
+def test_discover_service_candidates_from_tokens_cli_and_gateway_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(app.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "gh" else None)
+    (tmp_path / "google_token.json").write_text(
+        json.dumps({"scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly", "https://www.googleapis.com/auth/gmail.readonly"]}),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("platforms:\n  - telegram\n  - slack\n", encoding="utf-8")
+
+    candidates = app.discover_service_candidates(tmp_path, config_path)
+    by_id = {candidate["id"]: candidate for candidate in candidates}
+
+    assert "github" in by_id
+    assert by_id["github"]["config"]["type"] == "github_cli"
+    assert by_id["google_drive"]["config"]["type"] == "oauth_token"
+    assert by_id["google_drive"]["config"]["token_paths"] == ["~/.hermes/google_token.json"]
+    assert by_id["gmail"]["config"]["label"] == "Gmail"
+    assert by_id["gateway_telegram"]["config"]["type"] == "static"
+    assert by_id["gateway_slack"]["source"] == "hermes_config"
+
+
 def test_command_json_tracker_normalizes_windows():
     config = app.load_config(ROOT / "tests" / "fixtures" / "sample-config.yaml")
     tracker = config["subscription_trackers"][0]

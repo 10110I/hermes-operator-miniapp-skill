@@ -29,6 +29,7 @@ git clone https://github.com/10110I/hermes-operator-miniapp-skill.git ~/.hermes/
 python3 -m pip install --user PyYAML
 mkdir -p ~/.hermes/operator-miniapp
 cp ~/.hermes/operator-miniapp-skill/templates/config.yaml ~/.hermes/operator-miniapp/config.yaml
+python3 ~/.hermes/operator-miniapp-skill/scripts/operator_miniapp_status.py discover-services --pretty
 python3 ~/.hermes/operator-miniapp-skill/scripts/operator_miniapp_status.py --config ~/.hermes/operator-miniapp/config.yaml init-config
 python3 ~/.hermes/operator-miniapp-skill/scripts/operator_miniapp_status.py --config ~/.hermes/operator-miniapp/config.yaml collect --pretty
 python3 ~/.hermes/operator-miniapp-skill/scripts/operator_miniapp_status.py --config ~/.hermes/operator-miniapp/config.yaml serve --host 127.0.0.1 --port 9120
@@ -66,11 +67,20 @@ Templates:
 
 Services are **explicit probes**, not an automatic dump of every credential in `~/.hermes`. This keeps the Mini App useful and avoids leaking noisy internals.
 
+Run discovery first to get candidate config snippets:
+
+```bash
+python3 ~/.hermes/operator-miniapp-skill/scripts/operator_miniapp_status.py discover-services --pretty
+```
+
+Discovery inspects safe metadata only: installed CLIs (`gh`, `tailscale`), OAuth token scopes, and Hermes gateway platform names. It never enables a candidate automatically; selected candidates must appear under `services` with `enabled: true`.
+
 A service appears only when it is listed under `services` and `enabled: true`. Built-in service probe types:
 
 - `github_cli` — checks `gh auth status`;
 - `tailscale` — checks `tailscale status --json`;
 - `oauth_token` — checks that a local OAuth token file exists and, optionally, that it contains required scopes;
+- `static` — displays a configured gateway/platform candidate when no safe live probe exists;
 - `command` — runs a user-provided command and matches success output;
 - `file_exists` — simple local file presence check.
 
@@ -86,7 +96,7 @@ Supported tracker types:
 - `command_regex` — parses existing text reports with named regex groups;
 - `manual` — temporary static placeholder.
 
-See [`references/subscription-tracker-model.md`](references/subscription-tracker-model.md) and [`templates/config.yaml`](templates/config.yaml).
+See [`references/service-discovery.md`](references/service-discovery.md), [`references/subscription-tracker-model.md`](references/subscription-tracker-model.md), and [`templates/config.yaml`](templates/config.yaml).
 
 ## Security model
 
@@ -117,6 +127,7 @@ templates/config.yaml                     # user config template
 templates/hermes-operator-miniapp.service # user systemd service template
 templates/Caddyfile                       # narrow HTTPS reverse proxy template
 references/hosting.md                     # recommended hosting topologies
+references/service-discovery.md           # discovery candidates and display rules
 references/subscription-tracker-model.md  # provider-neutral tracker design
 tests/                                    # unit tests + fixtures
 ```

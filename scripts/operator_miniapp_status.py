@@ -17,6 +17,7 @@ import os
 import pathlib
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -289,6 +290,10 @@ def parse_cron_list(output: str, zone: ZoneInfo) -> list[dict[str, Any]]:
 # Services and subscriptions
 
 
+def hermes_home() -> pathlib.Path:
+    return pathlib.Path(os.path.expandvars(os.path.expanduser(os.getenv("HERMES_HOME", "~/.hermes"))))
+
+
 def _token_paths(item: dict[str, Any]) -> list[pathlib.Path]:
     raw_paths = item.get("token_paths") or item.get("paths") or item.get("path") or []
     if isinstance(raw_paths, str):
@@ -304,6 +309,109 @@ def _read_token_scopes(path: pathlib.Path) -> list[str]:
     if isinstance(scopes, list):
         return [str(scope) for scope in scopes if str(scope).strip()]
     return []
+
+
+def _service_candidate(candidate_id: str, label: str, source: str, reason: str, config: dict[str, Any]) -> dict[str, Any]:
+    return redact({"id": candidate_id, "label": label, "source": source, "reason": reason, "config": config})
+
+
+def _add_candidate(candidates: list[dict[str, Any]], candidate: dict[str, Any]) -> None:
+    if not any(existing.get("id") == candidate.get("id") for existing in candidates):
+        candidates.append(candidate)
+
+
+def _oauth_candidate_from_token(
+    *,
+    candidates: list[dict[str, Any]],
+    token_path: pathlib.Path,
+    config_token_path: str,
+    scopes: list[str],
+    candidate_id: str,
+    label: str,
+    needles: list[str],
+    access_scopes: dict[str, str],
+) -> None:
+    if not any(any(needle in scope for scope in scopes) for needle in needles):
+        return
+    config = {
+        "id": candidate_id,
+        "label": label,
+        "type": "oauth_token",
+        "enabled": True,
+        "token_paths": [config_token_path],
+        "required_scopes": needles[:1],
+        "access_scopes": access_scopes,
+        "access": ["OAuth"],
+    }
+    _add_candidate(candidates, _service_candidate(candidate_id, label, "oauth_token", f"token file with matching scopes: {token_path.name}", config))
+
+
+def _gateway_platform_names(config_path: pathlib.Path) -> list[str]:
+    if not config_path.exists():
+        return []
+    try:
+        data = load_config(config_path)
+    except Exception:
+        return []
+    gateway_raw = data.get("gateway")
+    gateway = gateway_raw if isinstance(gateway_raw, dict) else {}
+    raw = data.get("platforms") or gateway.get("platforms")
+    names: list[str] = []
+    if isinstance(raw, dict):
+        names.extend(str(key) for key, value in raw.items() if value is not False)
+    elif isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                name = item.get("id") or item.get("name") or item.get("platform")
+                if name and item.get("enabled", True) is not False:
+                    names.append(str(name))
+            elif item:
+                names.append(str(item))
+    return sorted(set(names))
+
+
+def discover_service_candidates(hermes_home_path: pathlib.Path | None = None, hermes_config_path: pathlib.Path | None = None) -> list[dict[str, Any]]:
+    """Find safe display candidates without enabling them automatically."""
+    home = hermes_home_path or hermes_home()
+    config_path = hermes_config_path or (home / "config.yaml")
+    candidates: list[dict[str, Any]] = []
+
+    if shutil.which("gh"):
+        _add_candidate(candidates, _service_candidate("github", "GitHub", "cli", "gh CLI is installed; runtime probe checks auth", {"id": "github", "label": "GitHub", "type": "github_cli", "enabled": True, "access": ["repo/auth"]}))
+    if shutil.which("tailscale"):
+        _add_candidate(candidates, _service_candidate("tailscale", "Tailscale", "cli", "tailscale CLI is installed; runtime probe checks status", {"id": "tailscale", "label": "Tailscale", "type": "tailscale", "enabled": True, "access": ["device/network"]}))
+
+    google_token = home / "google_token.json"
+    if google_token.exists():
+        try:
+            scopes = _read_token_scopes(google_token)
+        except Exception:
+            scopes = []
+        google_config_path = "~/.hermes/google_token.json"
+        _oauth_candidate_from_token(candidates=candidates, token_path=google_token, config_token_path=google_config_path, scopes=scopes, candidate_id="google_drive", label="Google Drive", needles=["/auth/drive"], access_scopes={"/auth/drive": "Drive API"})
+        _oauth_candidate_from_token(candidates=candidates, token_path=google_token, config_token_path=google_config_path, scopes=scopes, candidate_id="gmail", label="Gmail", needles=["gmail", "mail.google.com"], access_scopes={"gmail": "Gmail API", "mail.google.com": "Gmail API"})
+        _oauth_candidate_from_token(candidates=candidates, token_path=google_token, config_token_path=google_config_path, scopes=scopes, candidate_id="google_calendar", label="Google Calendar", needles=["/auth/calendar"], access_scopes={"/auth/calendar": "Calendar API"})
+        _oauth_candidate_from_token(candidates=candidates, token_path=google_token, config_token_path=google_config_path, scopes=scopes, candidate_id="google_sheets", label="Google Sheets", needles=["/auth/spreadsheets"], access_scopes={"/auth/spreadsheets": "Sheets API"})
+        _oauth_candidate_from_token(candidates=candidates, token_path=google_token, config_token_path=google_config_path, scopes=scopes, candidate_id="google_docs", label="Google Docs", needles=["/auth/documents"], access_scopes={"/auth/documents": "Docs API"})
+        _oauth_candidate_from_token(candidates=candidates, token_path=google_token, config_token_path=google_config_path, scopes=scopes, candidate_id="google_contacts", label="Google Contacts", needles=["/auth/contacts"], access_scopes={"/auth/contacts": "Contacts API"})
+
+    youtube_paths = [home / "youtube_token.json", home / "youtube_analytics_token.json", home / "youtube_uqi_token.json"]
+    for path in youtube_paths:
+        if not path.exists():
+            continue
+        try:
+            scopes = _read_token_scopes(path)
+        except Exception:
+            scopes = []
+        _oauth_candidate_from_token(candidates=candidates, token_path=path, config_token_path=f"~/.hermes/{path.name}", scopes=scopes, candidate_id="youtube", label="YouTube", needles=["youtube", "yt-analytics"], access_scopes={"youtube.upload": "upload", "youtube.force-ssl": "manage", "yt-analytics": "analytics"})
+
+    for platform in _gateway_platform_names(config_path):
+        platform_id = re.sub(r"[^a-z0-9_]+", "_", platform.lower()).strip("_") or "platform"
+        label = f"{platform.title()} Gateway"
+        config = {"id": f"gateway_{platform_id}", "label": label, "type": "static", "enabled": True, "status": "ok", "caption": "configured in Hermes gateway", "access": ["gateway"]}
+        _add_candidate(candidates, _service_candidate(config["id"], label, "hermes_config", f"platform listed in {config_path.name}", config))
+
+    return candidates
 
 
 def _collect_oauth_token_service(item: dict[str, Any], result: dict[str, Any]) -> None:
@@ -350,6 +458,9 @@ def collect_services(config: dict[str, Any]) -> list[dict[str, Any]]:
                 result["status"] = "ok" if pathlib.Path(os.path.expanduser(str(item["path"]))).exists() else "missing"
             elif service_type == "oauth_token":
                 _collect_oauth_token_service(item, result)
+            elif service_type == "static":
+                result["status"] = str(item.get("status") or "ok")
+                result["caption"] = str(item.get("caption") or result.get("caption") or "configured")
             elif service_type == "tailscale":
                 proc = run_command(["tailscale", "status", "--json"], timeout=20)
                 result["status"] = status_from_returncode(proc.returncode)
@@ -668,6 +779,17 @@ def init_config(path: pathlib.Path) -> None:
             "access": ["OAuth"],
         })
 
+    if ask("Discover additional service candidates from local Hermes config/tokens? yes/no", "yes").lower().startswith("y"):
+        existing_ids = {str(item.get("id")) for item in services}
+        for candidate in discover_service_candidates():
+            config = candidate.get("config") if isinstance(candidate.get("config"), dict) else None
+            if not config or str(config.get("id")) in existing_ids:
+                continue
+            prompt = f"Add discovered service {candidate.get('label')} ({candidate.get('reason')})? yes/no"
+            if ask(prompt, "no").lower().startswith("y"):
+                services.append(config)
+                existing_ids.add(str(config.get("id")))
+
     trackers: list[dict[str, Any]] = []
     while ask("Add a subscription tracker? yes/no", "no").lower().startswith("y"):
         tracker_id = ask("Tracker id, e.g. openai-codex or qwen-plan")
@@ -726,6 +848,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=pathlib.Path, default=DEFAULT_CONFIG_PATH)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init-config")
+    discover_parser = sub.add_parser("discover-services")
+    discover_parser.add_argument("--pretty", action="store_true")
+    discover_parser.add_argument("--hermes-home", type=pathlib.Path, default=None)
+    discover_parser.add_argument("--hermes-config", type=pathlib.Path, default=None)
     collect_parser = sub.add_parser("collect")
     collect_parser.add_argument("--pretty", action="store_true")
     serve_parser = sub.add_parser("serve")
@@ -735,6 +861,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "init-config":
         init_config(args.config)
+        return 0
+    if args.command == "discover-services":
+        payload = {"service_candidates": discover_service_candidates(args.hermes_home, args.hermes_config)}
+        print(json.dumps(payload, ensure_ascii=False, indent=2 if args.pretty else None))
         return 0
     if args.command == "collect":
         payload = collect_status(load_config(args.config))

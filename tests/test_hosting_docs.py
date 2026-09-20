@@ -23,3 +23,14 @@ def test_hosting_templates_keep_server_local_and_proxy_narrow_paths():
     assert "reverse_proxy @miniapp 127.0.0.1:9120" in caddy
     assert "path /miniapp /miniapp/* /api/status /health" in caddy
     assert "respond \"not found\" 404" in caddy
+
+
+def test_service_discovery_reference_and_template_are_opt_in():
+    reference = (ROOT / "references" / "service-discovery.md").read_text(encoding="utf-8")
+    template = (ROOT / "templates" / "config.yaml").read_text(encoding="utf-8")
+
+    assert "Discover candidates" in reference
+    assert "does not expose token values" in reference
+    assert "does not display every discovered candidate" in reference
+    assert "Run `discover-services --pretty`" in template
+    assert "enabled: false" in template

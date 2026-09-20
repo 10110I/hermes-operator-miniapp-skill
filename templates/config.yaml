@@ -11,17 +11,19 @@ telegram:
     - 123456789
   max_age_seconds: 86400
 
+# These are examples. Run `discover-services --pretty` and enable only
+# the services this Hermes instance should display.
 services:
   - id: github
     label: GitHub
     type: github_cli
-    enabled: true
+    enabled: false
     access: [repo/auth]
 
   - id: tailscale
     label: Tailscale
     type: tailscale
-    enabled: true
+    enabled: false
     access: [device/network]
 
   - id: google_drive
@@ -49,6 +51,14 @@ services:
       youtube.force-ssl: manage
       yt-analytics: analytics
     access: [OAuth]
+
+  - id: gateway_telegram
+    label: Telegram Gateway
+    type: static
+    enabled: false
+    status: ok
+    caption: configured in Hermes gateway
+    access: [gateway]
 
 subscription_trackers:
   # Best option: a command that prints normalized JSON.
