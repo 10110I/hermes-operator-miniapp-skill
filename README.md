@@ -11,17 +11,26 @@ This repository packages a Hermes skill plus helper scripts for a read-only Tele
 
 It is based on a real Hermes operator panel, but the subscription tracking was redesigned so users are not locked to one provider such as `openai-codex`.
 
-## Install the skill
+## Install paths
+
+There are two supported public install paths today:
+
+1. **Managed bootstrap skill** — small, scanner-friendly guide with no runtime scripts:
 
 ```bash
-hermes skills install https://raw.githubusercontent.com/10110I/hermes-operator-miniapp-skill/main/SKILL.md
+hermes skills install https://raw.githubusercontent.com/10110I/hermes-operator-miniapp-skill/main/bootstrap/SKILL.md
 ```
 
-Clone helper scripts:
+2. **Audited manual fallback** — full runtime package with hash verification:
 
 ```bash
 git clone https://github.com/10110I/hermes-operator-miniapp-skill.git ~/.hermes/operator-miniapp-skill
+cd ~/.hermes/operator-miniapp-skill
+git checkout <audited-tag-or-commit>
+python3 packaging/install_manual.py --source . --yes
 ```
+
+Why two paths: the full package intentionally contains local probes and a loopback Mini App backend, so community-source scanning may block a direct managed install until the package is published through a trusted Hermes skill source. See [`packaging/INSTALL.md`](packaging/INSTALL.md).
 
 ## Quick setup
 
@@ -121,11 +130,15 @@ python3 scripts/operator_miniapp_status.py --config tests/fixtures/sample-config
 ## Repository layout
 
 ```text
-SKILL.md                                  # installable Hermes skill
+SKILL.md                                  # full runtime skill; use manual fallback until trusted distribution
+bootstrap/SKILL.md                        # managed bootstrap skill without runtime scripts
+packaging/INSTALL.md                      # install matrix and manual fallback
+packaging/install_manual.py               # stdlib manual installer with hash verification
 scripts/operator_miniapp_status.py        # standalone Mini App server + collectors
 templates/config.yaml                     # user config template
 templates/hermes-operator-miniapp.service # user systemd service template
 templates/Caddyfile                       # narrow HTTPS reverse proxy template
+references/installation.md                # runtime-skill installation model
 references/hosting.md                     # recommended hosting topologies
 references/service-discovery.md           # discovery candidates and display rules
 references/subscription-tracker-model.md  # provider-neutral tracker design

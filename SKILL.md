@@ -1,7 +1,7 @@
 ---
 name: hermes-operator-miniapp-status
 description: Install Telegram status Mini Apps for Hermes.
-version: 0.1.0
+version: 0.1.1
 author: Konstantin, Hermes Agent
 license: MIT
 platforms: [linux, macos]
@@ -40,23 +40,28 @@ Do not use for:
 - Python 3.11+ and `PyYAML` for YAML config parsing.
 - HTTPS public URL for Telegram WebApp launch if users need mobile access outside localhost.
 
-Install dependency if needed:
+Install dependency if needed after choosing the manual runtime path:
 
 ```bash
 python3 -m pip install --user PyYAML
 ```
 
-Install this skill from GitHub:
+For public distribution, use the scanner-friendly bootstrap skill first:
 
 ```bash
-hermes skills install https://raw.githubusercontent.com/10110I/hermes-operator-miniapp-skill/main/SKILL.md
+hermes skills install https://raw.githubusercontent.com/10110I/hermes-operator-miniapp-skill/main/bootstrap/SKILL.md
 ```
 
-Clone helper scripts when installing the Mini App:
+Then install the full runtime package from an audited checkout:
 
 ```bash
 git clone https://github.com/10110I/hermes-operator-miniapp-skill.git ~/.hermes/operator-miniapp-skill
+cd ~/.hermes/operator-miniapp-skill
+git checkout <audited-tag-or-commit>
+python3 packaging/install_manual.py --source . --yes
 ```
+
+Why: the full runtime package includes local probes and a loopback Mini App backend, so a community-source scanner may block a direct managed install until the package is distributed from a trusted Hermes skill source.
 
 ## Setup Questions
 
@@ -72,7 +77,7 @@ Before writing config, ask the user these questions in one short batch:
 8. Which HTTPS URL will be used for the Mini App, or should setup stop at localhost?
 9. Where will it be hosted: same VPS as Hermes, home machine behind a tunnel, or a separate backend with a sanitized snapshot collector? Default to same host as Hermes.
 
-For service discovery details, read `references/service-discovery.md`. For hosting details, read `references/hosting.md`. For the subscription model details, read `references/subscription-tracker-model.md`.
+For installation details, read `references/installation.md`. For service discovery details, read `references/service-discovery.md`. For hosting details, read `references/hosting.md`. For the subscription model details, read `references/subscription-tracker-model.md`.
 
 ## Quick Start
 
@@ -96,15 +101,16 @@ The local page will show `Mini App unavailable` unless it is opened through Tele
 ## Procedure
 
 1. **Install files.** Clone the repo into `~/.hermes/operator-miniapp-skill` and ensure `scripts/operator_miniapp_status.py` exists. Completion: `python3 .../operator_miniapp_status.py --help` exits 0.
-2. **Discover service candidates.** Run `discover-services --pretty` and review candidate `config` snippets from CLI tools, OAuth scopes, and Hermes gateway platforms. Completion: candidate output contains only labels/reasons/config snippets, no token values.
-3. **Create config.** Run `init-config` or copy `templates/config.yaml` and edit it. Completion: config contains no token values, only env var names, token file paths, and command paths.
-4. **Configure service display.** Enable only useful candidates under `services`; add custom `command`, `file_exists`, `oauth_token`, or `static` probes for user-specific integrations. Completion: `collect --pretty` shows the selected services with clear `ok`/`limited`/`missing`/`error` statuses.
-5. **Configure subscriptions.** For each provider, prefer a `command_json` adapter. Use `command_regex` only for existing text reports. Completion: every tracker returns normalized accounts/windows through `collect --pretty`.
-6. **Run locally.** Start `serve --host 127.0.0.1 --port 9120`. Completion: `/health` returns `{"ok": true}`.
-7. **Choose hosting.** Default to the same host that runs Hermes, using `templates/hermes-operator-miniapp.service` for the local server. If the host is behind NAT, use Cloudflare Tunnel or Tailscale Funnel/Serve. Completion: the Mini App process is local-only on `127.0.0.1` and has access to local Hermes probes.
-8. **Expose narrowly.** Put Caddy/nginx/Cloudflare/Tailscale in front of only `/miniapp`, `/api/status`, and `/health`. Completion: public `/miniapp` returns HTML, public `/api/status` rejects unsigned requests, and the full Hermes dashboard is not reachable through this endpoint.
-9. **Register Telegram WebApp.** Set bot menu/button to the HTTPS `/miniapp` URL. Completion: Telegram `getChatMenuButton` returns `type=web_app` with the expected URL.
-10. **Verify end to end.** Open the Mini App from Telegram as an allowlisted user. Completion: services, subscriptions, and cron jobs render; unauthorized/signed-invalid requests get 403; no secret appears in page text or API JSON.
+2. **Install runtime skill.** Run `packaging/install_manual.py --source . --yes` from the audited checkout. Completion: installer JSON reports `hash_match: true` and the runtime skill directory exists under `HERMES_HOME/skills`.
+3. **Discover service candidates.** Run `discover-services --pretty` and review candidate `config` snippets from CLI tools, OAuth scopes, and Hermes gateway platforms. Completion: candidate output contains only labels/reasons/config snippets, no token values.
+4. **Create config.** Run `init-config` or copy `templates/config.yaml` and edit it. Completion: config contains no token values, only env var names, token file paths, and command paths.
+5. **Configure service display.** Enable only useful candidates under `services`; add custom `command`, `file_exists`, `oauth_token`, or `static` probes for user-specific integrations. Completion: `collect --pretty` shows the selected services with clear `ok`/`limited`/`missing`/`error` statuses.
+6. **Configure subscriptions.** For each provider, prefer a `command_json` adapter. Use `command_regex` only for existing text reports. Completion: every tracker returns normalized accounts/windows through `collect --pretty`.
+7. **Run locally.** Start `serve --host 127.0.0.1 --port 9120`. Completion: `/health` returns `{"ok": true}`.
+8. **Choose hosting.** Default to the same host that runs Hermes, using `templates/hermes-operator-miniapp.service` for the local server. If the host is behind NAT, use Cloudflare Tunnel or Tailscale Funnel/Serve. Completion: the Mini App process is local-only on `127.0.0.1` and has access to local Hermes probes.
+9. **Expose narrowly.** Put Caddy/nginx/Cloudflare/Tailscale in front of only `/miniapp`, `/api/status`, and `/health`. Completion: public `/miniapp` returns HTML, public `/api/status` rejects unsigned requests, and the full Hermes dashboard is not reachable through this endpoint.
+10. **Register Telegram WebApp.** Set bot menu/button to the HTTPS `/miniapp` URL. Completion: Telegram `getChatMenuButton` returns `type=web_app` with the expected URL.
+11. **Verify end to end.** Open the Mini App from Telegram as an allowlisted user. Completion: services, subscriptions, and cron jobs render; unauthorized/signed-invalid requests get 403; no secret appears in page text or API JSON.
 
 ## Service Probe Contract
 
