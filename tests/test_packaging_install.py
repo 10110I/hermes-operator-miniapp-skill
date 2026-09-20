@@ -45,6 +45,7 @@ def test_manual_installer_copies_runtime_skill_with_hash_verification(tmp_path):
     assert skill_target.joinpath("SKILL.md").exists()
     assert skill_target.joinpath("references", "installation.md").exists()
     assert skill_target.joinpath("scripts", "operator_miniapp_status.py").exists()
+    assert not skill_target.joinpath("scripts", "__pycache__").exists()
     assert helper_target.joinpath("packaging", "install_manual.py").exists()
     assert helper_target.joinpath("bootstrap", "SKILL.md").exists()
     assert helper_target.joinpath(".source-commit").read_text(encoding="utf-8").strip() == payload["source_commit"]

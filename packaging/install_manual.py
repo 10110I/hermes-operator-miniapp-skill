@@ -41,9 +41,12 @@ def iter_files(root: pathlib.Path, rels: Iterable[str]) -> Iterable[pathlib.Path
     for rel in rels:
         path = root / rel
         if path.is_file():
-            yield path
+            if not any(part in IGNORE_NAMES for part in path.relative_to(root).parts):
+                yield path
         elif path.is_dir():
             for file_path in sorted(child for child in path.rglob("*") if child.is_file()):
+                if any(part in IGNORE_NAMES for part in file_path.relative_to(root).parts):
+                    continue
                 yield file_path
 
 
@@ -73,7 +76,7 @@ def backup_existing(path: pathlib.Path, *, backup_root: pathlib.Path, hermes_hom
 
 def copy_path(source: pathlib.Path, target: pathlib.Path) -> None:
     if source.is_dir():
-        shutil.copytree(source, target)
+        shutil.copytree(source, target, ignore=ignore_helper_names)
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
