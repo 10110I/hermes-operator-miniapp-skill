@@ -69,8 +69,9 @@ Before writing config, ask the user these questions in one short batch:
 5. For each subscription: provider label, source type (`command_json`, `command_regex`, or `manual`), account/pool structure, quota windows, and reset text format.
 6. Which display timezone should be used? Default to `Europe/Moscow` only when the user has no other preference.
 7. Which HTTPS URL will be used for the Mini App, or should setup stop at localhost?
+8. Where will it be hosted: same VPS as Hermes, home machine behind a tunnel, or a separate backend with a sanitized snapshot collector? Default to same host as Hermes.
 
-For the subscription model details, read `references/subscription-tracker-model.md`.
+For hosting details, read `references/hosting.md`. For the subscription model details, read `references/subscription-tracker-model.md`.
 
 ## Quick Start
 
@@ -96,9 +97,10 @@ The local page will show `Mini App unavailable` unless it is opened through Tele
 2. **Create config.** Run `init-config` or copy `templates/config.yaml` and edit it. Completion: config contains no token values, only env var names and command paths.
 3. **Configure subscriptions.** For each provider, prefer a `command_json` adapter. Use `command_regex` only for existing text reports. Completion: every tracker returns normalized accounts/windows through `collect --pretty`.
 4. **Run locally.** Start `serve --host 127.0.0.1 --port 9120`. Completion: `/health` returns `{"ok": true}`.
-5. **Expose narrowly.** Put Caddy/nginx/Cloudflare/Tailscale in front of only `/miniapp`, `/api/status`, and `/health`. Completion: public `/miniapp` returns HTML, not the full Hermes dashboard.
-6. **Register Telegram WebApp.** Set bot menu/button to the HTTPS `/miniapp` URL. Completion: Telegram `getChatMenuButton` returns `type=web_app` with the expected URL.
-7. **Verify end to end.** Open the Mini App from Telegram as an allowlisted user. Completion: services, subscriptions, and cron jobs render; unauthorized/signed-invalid requests get 403; no secret appears in page text or API JSON.
+5. **Choose hosting.** Default to the same host that runs Hermes, using `templates/hermes-operator-miniapp.service` for the local server. If the host is behind NAT, use Cloudflare Tunnel or Tailscale Funnel/Serve. Completion: the Mini App process is local-only on `127.0.0.1` and has access to local Hermes probes.
+6. **Expose narrowly.** Put Caddy/nginx/Cloudflare/Tailscale in front of only `/miniapp`, `/api/status`, and `/health`. Completion: public `/miniapp` returns HTML, public `/api/status` rejects unsigned requests, and the full Hermes dashboard is not reachable through this endpoint.
+7. **Register Telegram WebApp.** Set bot menu/button to the HTTPS `/miniapp` URL. Completion: Telegram `getChatMenuButton` returns `type=web_app` with the expected URL.
+8. **Verify end to end.** Open the Mini App from Telegram as an allowlisted user. Completion: services, subscriptions, and cron jobs render; unauthorized/signed-invalid requests get 403; no secret appears in page text or API JSON.
 
 ## Subscription Tracker Contract
 

@@ -40,7 +40,27 @@ Local URL:
 http://127.0.0.1:9120/miniapp
 ```
 
-For Telegram users, expose it through a narrow HTTPS reverse proxy and register the `/miniapp` URL as a Telegram WebApp menu/button.
+## Hosting model
+
+Default hosting is **self-hosted on the same machine that runs Hermes**:
+
+```text
+Telegram → HTTPS reverse proxy → 127.0.0.1:9120 Mini App server → local Hermes state/probes
+```
+
+Why: the API must validate Telegram `initData` server-side and read local Hermes cron/provider probe data. Static hosting alone is not enough.
+
+Recommended production setup:
+
+1. run `operator_miniapp_status.py` as a user service bound to `127.0.0.1:9120`;
+2. expose only `/miniapp`, `/api/status`, and `/health` through Caddy/nginx/Cloudflare Tunnel/Tailscale Funnel;
+3. register the final HTTPS `/miniapp` URL as the Telegram WebApp menu/button.
+
+Templates:
+
+- [`templates/hermes-operator-miniapp.service`](templates/hermes-operator-miniapp.service)
+- [`templates/Caddyfile`](templates/Caddyfile)
+- [`references/hosting.md`](references/hosting.md)
 
 ## Subscription tracking design
 
@@ -80,6 +100,9 @@ python3 scripts/operator_miniapp_status.py --config tests/fixtures/sample-config
 SKILL.md                                  # installable Hermes skill
 scripts/operator_miniapp_status.py        # standalone Mini App server + collectors
 templates/config.yaml                     # user config template
+templates/hermes-operator-miniapp.service # user systemd service template
+templates/Caddyfile                       # narrow HTTPS reverse proxy template
+references/hosting.md                     # recommended hosting topologies
 references/subscription-tracker-model.md  # provider-neutral tracker design
 tests/                                    # unit tests + fixtures
 ```

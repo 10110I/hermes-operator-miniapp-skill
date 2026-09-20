@@ -1,0 +1,31 @@
+# User systemd unit template for Hermes Operator Mini App.
+# Copy to: ~/.config/systemd/user/hermes-operator-miniapp.service
+# Then run:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now hermes-operator-miniapp
+#   systemctl --user status hermes-operator-miniapp
+
+[Unit]
+Description=Hermes Operator Telegram Mini App status server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.hermes/operator-miniapp-skill
+Environment=PYTHONUNBUFFERED=1
+# Optional local env file containing TELEGRAM_BOT_TOKEN=...
+EnvironmentFile=-%h/.hermes/operator-miniapp/.env
+ExecStart=/usr/bin/env python3 %h/.hermes/operator-miniapp-skill/scripts/operator_miniapp_status.py --config %h/.hermes/operator-miniapp/config.yaml serve --host 127.0.0.1 --port 9120
+Restart=on-failure
+RestartSec=5
+
+# Basic hardening. Relax if a provider probe needs more filesystem access.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.hermes/operator-miniapp %h/.hermes/logs
+
+[Install]
+WantedBy=default.target

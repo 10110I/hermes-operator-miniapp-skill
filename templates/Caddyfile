@@ -1,0 +1,18 @@
+# Caddy template for Hermes Operator Mini App.
+# Replace miniapp.example.com with the user's domain.
+# This exposes only the Mini App paths, not the full Hermes dashboard.
+
+miniapp.example.com {
+    encode zstd gzip
+
+    @miniapp path /miniapp /miniapp/* /api/status /health
+    reverse_proxy @miniapp 127.0.0.1:9120
+
+    respond "not found" 404
+
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+}
