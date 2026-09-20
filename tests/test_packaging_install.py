@@ -20,16 +20,17 @@ def test_bootstrap_skill_is_thin_and_has_no_runtime_payload_triggers():
 
 def test_manual_installer_copies_runtime_skill_with_hash_verification(tmp_path):
     hermes_home = tmp_path / "hermes-home"
+    command = [
+        sys.executable,
+        str(ROOT / "packaging" / "install_manual.py"),
+        "--source",
+        str(ROOT),
+        "--hermes-home",
+        str(hermes_home),
+        "--yes",
+    ]
     result = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "packaging" / "install_manual.py"),
-            "--source",
-            str(ROOT),
-            "--hermes-home",
-            str(hermes_home),
-            "--yes",
-        ],
+        command,
         check=True,
         text=True,
         capture_output=True,
@@ -47,6 +48,13 @@ def test_manual_installer_copies_runtime_skill_with_hash_verification(tmp_path):
     assert helper_target.joinpath("packaging", "install_manual.py").exists()
     assert helper_target.joinpath("bootstrap", "SKILL.md").exists()
     assert helper_target.joinpath(".source-commit").read_text(encoding="utf-8").strip() == payload["source_commit"]
+
+    second = subprocess.run(command, check=True, text=True, capture_output=True)
+    second_payload = json.loads(second.stdout)
+    assert second_payload["hash_match"] is True
+    assert second_payload["backups"]
+    assert all(".operator-miniapp-backups" in item for item in second_payload["backups"])
+    assert not list(hermes_home.joinpath("skills").rglob("*.backup-*/SKILL.md"))
 
 
 def test_packaging_docs_explain_bootstrap_manual_and_trusted_paths():

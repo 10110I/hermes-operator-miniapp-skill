@@ -33,7 +33,7 @@ What the installer does:
 
 - copies only the runtime skill subtree into `HERMES_HOME/skills/autonomous-ai-agents/hermes-operator-miniapp-status`;
 - keeps the helper directory at `HERMES_HOME/operator-miniapp-skill`;
-- backs up existing targets before replacing them;
+- backs up existing targets under `HERMES_HOME/.operator-miniapp-backups/` before replacing them;
 - verifies SHA-256 hashes of copied runtime files;
 - prints a JSON summary with source commit, target paths, file count, and `hash_match`.
 

@@ -54,15 +54,19 @@ def hash_map(root: pathlib.Path, rels: Iterable[str]) -> dict[str, str]:
     return mapping
 
 
-def backup_existing(path: pathlib.Path) -> pathlib.Path | None:
+def backup_existing(path: pathlib.Path, *, backup_root: pathlib.Path, hermes_home: pathlib.Path) -> pathlib.Path | None:
     if not path.exists():
         return None
-    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d%H%M%S")
-    backup = path.with_name(f"{path.name}.backup-{stamp}")
+    try:
+        relative = path.resolve().relative_to(hermes_home.resolve())
+    except ValueError:
+        relative = pathlib.Path(path.name)
+    backup = backup_root / relative
     counter = 1
     while backup.exists():
-        backup = path.with_name(f"{path.name}.backup-{stamp}-{counter}")
+        backup = backup_root / relative.with_name(f"{relative.name}.{counter}")
         counter += 1
+    backup.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(path), str(backup))
     return backup
 
@@ -79,18 +83,18 @@ def ignore_helper_names(_dir: str, names: list[str]) -> set[str]:
     return {name for name in names if name in IGNORE_NAMES}
 
 
-def copy_runtime_skill(source: pathlib.Path, target: pathlib.Path) -> pathlib.Path | None:
-    backup = backup_existing(target)
+def copy_runtime_skill(source: pathlib.Path, target: pathlib.Path, *, backup_root: pathlib.Path, hermes_home: pathlib.Path) -> pathlib.Path | None:
+    backup = backup_existing(target, backup_root=backup_root, hermes_home=hermes_home)
     target.mkdir(parents=True, exist_ok=True)
     for rel in RUNTIME_PATHS:
         copy_path(source / rel, target / rel)
     return backup
 
 
-def copy_helper_repo(source: pathlib.Path, target: pathlib.Path) -> pathlib.Path | None:
+def copy_helper_repo(source: pathlib.Path, target: pathlib.Path, *, backup_root: pathlib.Path, hermes_home: pathlib.Path) -> pathlib.Path | None:
     if source.resolve() == target.resolve():
         return None
-    backup = backup_existing(target)
+    backup = backup_existing(target, backup_root=backup_root, hermes_home=hermes_home)
     shutil.copytree(source, target, ignore=ignore_helper_names)
     return backup
 
@@ -148,14 +152,16 @@ def main(argv: list[str] | None = None) -> int:
     source_hashes = hash_map(source, RUNTIME_PATHS)
     source_commit = repo_commit(source)
     backups: list[str] = []
-    skill_backup = copy_runtime_skill(source, skill_target)
+    backup_stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d%H%M%S")
+    backup_root = home / ".operator-miniapp-backups" / backup_stamp
+    skill_backup = copy_runtime_skill(source, skill_target, backup_root=backup_root, hermes_home=home)
     if skill_backup:
         backups.append(str(skill_backup))
 
     helper_backup: pathlib.Path | None = None
     helper_commit: str | None = None
     if not args.skip_helper:
-        helper_backup = copy_helper_repo(source, helper_target)
+        helper_backup = copy_helper_repo(source, helper_target, backup_root=backup_root, hermes_home=home)
         if helper_backup:
             backups.append(str(helper_backup))
         helper_commit = helper_commit_marker(helper_target, source_commit)
