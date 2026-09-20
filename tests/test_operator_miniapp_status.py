@@ -131,6 +131,18 @@ def test_subscription_limit_labels_use_compact_mobile_layout():
     assert "barlabel" not in html
 
 
+def test_refresh_button_uses_explicit_click_handler_and_no_store_fetch():
+    html = app.MINIAPP_HTML
+
+    assert 'id="refresh" type="button"' in html
+    assert "addEventListener('click'" in html
+    assert "Обновляю…" in html
+    assert "Обновляю данные…" in html
+    assert "cache:'no-store'" in html
+    assert "'cache-control':'no-cache'" in html
+    assert "/api/status?refresh=" in html
+
+
 def test_command_regex_tracker_parses_text_report():
     config = app.load_config(ROOT / "tests" / "fixtures" / "sample-config.yaml")
     tracker = config["subscription_trackers"][1]
