@@ -62,6 +62,20 @@ Templates:
 - [`templates/Caddyfile`](templates/Caddyfile)
 - [`references/hosting.md`](references/hosting.md)
 
+## Service display design
+
+Services are **explicit probes**, not an automatic dump of every credential in `~/.hermes`. This keeps the Mini App useful and avoids leaking noisy internals.
+
+A service appears only when it is listed under `services` and `enabled: true`. Built-in service probe types:
+
+- `github_cli` — checks `gh auth status`;
+- `tailscale` — checks `tailscale status --json`;
+- `oauth_token` — checks that a local OAuth token file exists and, optionally, that it contains required scopes;
+- `command` — runs a user-provided command and matches success output;
+- `file_exists` — simple local file presence check.
+
+Use `subscription_trackers` for model/API subscription quotas, not the services block.
+
 ## Subscription tracking design
 
 Subscriptions are configured under `subscription_trackers`. The Mini App UI renders a normalized data shape; provider-specific collection happens in adapters.

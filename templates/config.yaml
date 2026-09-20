@@ -26,11 +26,29 @@ services:
 
   - id: google_drive
     label: Google Drive
-    type: command
+    type: oauth_token
     enabled: false
-    command: python ~/.hermes/skills/productivity/google-workspace/scripts/google_api.py drive search --limit 1
-    success_regex: .+
-    access: [drive.readonly]
+    token_paths:
+      - ~/.hermes/google_token.json
+    required_scopes:
+      - /auth/drive
+    access_scopes:
+      /auth/drive: Drive API
+    access: [OAuth]
+
+  - id: youtube
+    label: YouTube
+    type: oauth_token
+    enabled: false
+    token_paths:
+      - ~/.hermes/youtube_token.json
+      - ~/.hermes/youtube_analytics_token.json
+      - ~/.hermes/youtube_uqi_token.json
+    access_scopes:
+      youtube.upload: upload
+      youtube.force-ssl: manage
+      yt-analytics: analytics
+    access: [OAuth]
 
 subscription_trackers:
   # Best option: a command that prints normalized JSON.

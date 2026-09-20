@@ -289,6 +289,50 @@ def parse_cron_list(output: str, zone: ZoneInfo) -> list[dict[str, Any]]:
 # Services and subscriptions
 
 
+def _token_paths(item: dict[str, Any]) -> list[pathlib.Path]:
+    raw_paths = item.get("token_paths") or item.get("paths") or item.get("path") or []
+    if isinstance(raw_paths, str):
+        raw_paths = [raw_paths]
+    return [pathlib.Path(os.path.expandvars(os.path.expanduser(str(path)))) for path in raw_paths]
+
+
+def _read_token_scopes(path: pathlib.Path) -> list[str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    scopes = data.get("scopes") or data.get("scope") or []
+    if isinstance(scopes, str):
+        return [scope for scope in scopes.split() if scope]
+    if isinstance(scopes, list):
+        return [str(scope) for scope in scopes if str(scope).strip()]
+    return []
+
+
+def _collect_oauth_token_service(item: dict[str, Any], result: dict[str, Any]) -> None:
+    token_path = next((path for path in _token_paths(item) if path.exists()), None)
+    if token_path is None:
+        result["status"] = "missing"
+        result["caption"] = "OAuth token не найден"
+        return
+
+    scopes = _read_token_scopes(token_path)
+    required = [str(scope) for scope in item.get("required_scopes", [])]
+    missing = [needle for needle in required if not any(needle in scope for scope in scopes)]
+    if missing:
+        result["status"] = "limited"
+        result["caption"] = "OAuth есть, но не хватает scope: " + ", ".join(missing[:3])
+    else:
+        result["status"] = "ok"
+        result["caption"] = "OAuth token найден"
+
+    access_map = item.get("access_scopes") or {}
+    access = []
+    if isinstance(access_map, dict):
+        for needle, label in access_map.items():
+            if any(str(needle) in scope for scope in scopes):
+                access.append(str(label))
+    if access:
+        result["access"] = access
+
+
 def collect_services(config: dict[str, Any]) -> list[dict[str, Any]]:
     services = []
     for item in config.get("services", []):
@@ -304,6 +348,8 @@ def collect_services(config: dict[str, Any]) -> list[dict[str, Any]]:
                 result["status"] = "ok" if proc.returncode == 0 and (not ok_regex or re.search(ok_regex, text, re.I)) else "error"
             elif service_type == "file_exists":
                 result["status"] = "ok" if pathlib.Path(os.path.expanduser(str(item["path"]))).exists() else "missing"
+            elif service_type == "oauth_token":
+                _collect_oauth_token_service(item, result)
             elif service_type == "tailscale":
                 proc = run_command(["tailscale", "status", "--json"], timeout=20)
                 result["status"] = status_from_returncode(proc.returncode)
@@ -600,6 +646,27 @@ def init_config(path: pathlib.Path) -> None:
         services.append({"id": "github", "label": "GitHub", "type": "github_cli", "enabled": True, "access": ["repo/auth"]})
     if ask("Track Tailscale via tailscale status? yes/no", "yes").lower().startswith("y"):
         services.append({"id": "tailscale", "label": "Tailscale", "type": "tailscale", "enabled": True, "access": ["device/network"]})
+    if ask("Track Google Drive OAuth token/scopes? yes/no", "no").lower().startswith("y"):
+        services.append({
+            "id": "google_drive",
+            "label": "Google Drive",
+            "type": "oauth_token",
+            "enabled": True,
+            "token_paths": ["~/.hermes/google_token.json"],
+            "required_scopes": ["/auth/drive"],
+            "access_scopes": {"/auth/drive": "Drive API"},
+            "access": ["OAuth"],
+        })
+    if ask("Track YouTube OAuth token/scopes? yes/no", "no").lower().startswith("y"):
+        services.append({
+            "id": "youtube",
+            "label": "YouTube",
+            "type": "oauth_token",
+            "enabled": True,
+            "token_paths": ["~/.hermes/youtube_token.json", "~/.hermes/youtube_analytics_token.json", "~/.hermes/youtube_uqi_token.json"],
+            "access_scopes": {"youtube.upload": "upload", "youtube.force-ssl": "manage", "yt-analytics": "analytics"},
+            "access": ["OAuth"],
+        })
 
     trackers: list[dict[str, Any]] = []
     while ask("Add a subscription tracker? yes/no", "no").lower().startswith("y"):

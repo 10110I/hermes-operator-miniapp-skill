@@ -65,11 +65,12 @@ Before writing config, ask the user these questions in one short batch:
 1. Which Telegram bot token env var should the server read?
 2. Which Telegram user IDs are allowed?
 3. Which services should be shown: GitHub, Tailscale, Google Drive, YouTube, custom command probes?
-4. Which subscriptions should be tracked?
-5. For each subscription: provider label, source type (`command_json`, `command_regex`, or `manual`), account/pool structure, quota windows, and reset text format.
-6. Which display timezone should be used? Default to `Europe/Moscow` only when the user has no other preference.
-7. Which HTTPS URL will be used for the Mini App, or should setup stop at localhost?
-8. Where will it be hosted: same VPS as Hermes, home machine behind a tunnel, or a separate backend with a sanitized snapshot collector? Default to same host as Hermes.
+4. Which service probe style is appropriate: CLI health check, OAuth token/scope check, custom command, or file presence? Do not auto-display every credential.
+5. Which subscriptions should be tracked?
+6. For each subscription: provider label, source type (`command_json`, `command_regex`, or `manual`), account/pool structure, quota windows, and reset text format.
+7. Which display timezone should be used? Default to `Europe/Moscow` only when the user has no other preference.
+8. Which HTTPS URL will be used for the Mini App, or should setup stop at localhost?
+9. Where will it be hosted: same VPS as Hermes, home machine behind a tunnel, or a separate backend with a sanitized snapshot collector? Default to same host as Hermes.
 
 For hosting details, read `references/hosting.md`. For the subscription model details, read `references/subscription-tracker-model.md`.
 
@@ -101,6 +102,34 @@ The local page will show `Mini App unavailable` unless it is opened through Tele
 6. **Expose narrowly.** Put Caddy/nginx/Cloudflare/Tailscale in front of only `/miniapp`, `/api/status`, and `/health`. Completion: public `/miniapp` returns HTML, public `/api/status` rejects unsigned requests, and the full Hermes dashboard is not reachable through this endpoint.
 7. **Register Telegram WebApp.** Set bot menu/button to the HTTPS `/miniapp` URL. Completion: Telegram `getChatMenuButton` returns `type=web_app` with the expected URL.
 8. **Verify end to end.** Open the Mini App from Telegram as an allowlisted user. Completion: services, subscriptions, and cron jobs render; unauthorized/signed-invalid requests get 403; no secret appears in page text or API JSON.
+
+## Service Probe Contract
+
+Services live under `services` and are intentionally explicit. They are not auto-discovered from every Hermes credential, because that would add noise and risk exposing internal integration names.
+
+Built-in types:
+
+- `github_cli` checks GitHub CLI auth;
+- `tailscale` checks Tailscale device/network status;
+- `oauth_token` checks token-file presence and optional OAuth scopes for services such as Google Drive or YouTube;
+- `command` runs any local probe command;
+- `file_exists` checks a local marker file.
+
+Example OAuth service:
+
+```yaml
+services:
+  - id: google_drive
+    label: Google Drive
+    type: oauth_token
+    enabled: true
+    token_paths: [~/.hermes/google_token.json]
+    required_scopes: [/auth/drive]
+    access_scopes:
+      /auth/drive: Drive API
+```
+
+Use subscription trackers, not services, for model-provider quota windows.
 
 ## Subscription Tracker Contract
 

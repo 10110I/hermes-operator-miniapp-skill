@@ -26,6 +26,53 @@ def signed_init_data(bot_token: str, user_id: int = 1002597417) -> str:
     return urllib.parse.urlencode(params)
 
 
+def test_oauth_token_service_reports_scope_access(tmp_path):
+    token = tmp_path / "google_token.json"
+    token.write_text(json.dumps({"scopes": ["https://www.googleapis.com/auth/drive.metadata.readonly"]}), encoding="utf-8")
+    config = {
+        "services": [
+            {
+                "id": "google_drive",
+                "label": "Google Drive",
+                "type": "oauth_token",
+                "enabled": True,
+                "token_paths": [str(token)],
+                "required_scopes": ["/auth/drive"],
+                "access_scopes": {"/auth/drive": "Drive API"},
+                "access": ["OAuth"],
+            }
+        ]
+    }
+
+    services = app.collect_services(config)
+
+    assert services == [
+        {
+            "id": "google_drive",
+            "label": "Google Drive",
+            "status": "ok",
+            "caption": "OAuth token найден",
+            "access": ["Drive API"],
+        }
+    ]
+
+
+def test_oauth_token_service_reports_missing_and_limited_scope(tmp_path):
+    missing_config = {"services": [{"id": "svc", "type": "oauth_token", "token_paths": [str(tmp_path / "missing.json")]}]}
+    assert app.collect_services(missing_config)[0]["status"] == "missing"
+
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"scope": "profile email"}), encoding="utf-8")
+    limited_config = {
+        "services": [
+            {"id": "drive", "type": "oauth_token", "token_paths": [str(token)], "required_scopes": ["/auth/drive"], "access": ["OAuth"]}
+        ]
+    }
+    service = app.collect_services(limited_config)[0]
+    assert service["status"] == "limited"
+    assert "/auth/drive" in service["caption"]
+
+
 def test_command_json_tracker_normalizes_windows():
     config = app.load_config(ROOT / "tests" / "fixtures" / "sample-config.yaml")
     tracker = config["subscription_trackers"][0]
