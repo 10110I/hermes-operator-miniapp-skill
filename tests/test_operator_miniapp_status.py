@@ -111,6 +111,8 @@ def test_command_json_tracker_normalizes_windows():
     account = summary["accounts"][0]
     assert account["label"] == "JSON Account"
     assert account["plan"] == "Pro"
+    assert account["reset_bank"] == 2
+    assert account["reset_bank_text"] == "reset bank: 2 доступны"
     assert account["windows"][0] == {
         "key": "five_hour",
         "label": "5 часов",
@@ -126,6 +128,8 @@ def test_subscription_limit_labels_use_compact_mobile_layout():
     assert "limit-head" in html
     assert "limit-stats" in html
     assert "status-badge" in html
+    assert "resetBank" in html
+    assert "reset bank:" in html
     assert "использовано" in html
     assert "потрачено" not in html
     assert "barlabel" not in html

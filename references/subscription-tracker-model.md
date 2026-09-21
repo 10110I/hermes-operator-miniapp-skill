@@ -13,7 +13,7 @@ During setup the agent or `scripts/operator_miniapp_status.py init-config` shoul
    - `manual`: static/manual placeholder until a source exists.
 3. **Accounts/seats** — whether the subscription has one account or a pool.
 4. **Windows** — which quota windows to display: e.g. `5 hours`, `weekly`, `monthly`, `credits`, `requests/day`.
-5. **Fields** — for each window, map `used_percent`, `remaining_percent`, and optional `reset_text`.
+5. **Fields** — for each window, map `used_percent`, `remaining_percent`, and optional `reset_text`; for OpenAI-style reset credits, map optional account-level `reset_bank` and `reset_bank_text`.
 6. **Refresh** — default Mini App refresh is on open/click; if a provider is slow, wrap the command in a cache script or cron job.
 7. **Secrets** — only ask for env var names or existing local command paths. Never store token values in config.
 
@@ -34,6 +34,8 @@ All adapters normalize to this API shape:
       "label": "Account label",
       "provider": "provider-name",
       "plan": "Pro",
+      "reset_bank": 1,
+      "reset_bank_text": "reset bank: 1 доступен",
       "status": "ok",
       "available": true,
       "windows": [
@@ -42,7 +44,7 @@ All adapters normalize to this API shape:
           "label": "Неделя",
           "used_percent": 42,
           "remaining_percent": 58,
-          "reset_text": "reset in 2d"
+          "reset_text": "сброс через 2д"
         }
       ]
     }
@@ -69,6 +71,8 @@ subscription_trackers:
     account_label_path: label
     status_path: status
     plan_path: plan
+    reset_bank_path: reset_bank
+    reset_bank_text_path: reset_bank_text
     windows_path: windows
     window_label_path: label
     used_percent_path: used_percent

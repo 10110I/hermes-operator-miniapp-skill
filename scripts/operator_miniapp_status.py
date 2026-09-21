@@ -483,6 +483,7 @@ def collect_services(config: dict[str, Any]) -> list[dict[str, Any]]:
 def normalize_account(account: dict[str, Any], fallback_label: str) -> dict[str, Any]:
     status = str(account.get("status") or ("ok" if account.get("available", True) else "limited")).lower()
     windows = account.get("windows") or []
+    reset_bank = account.get("reset_bank", account.get("banked_resets", account.get("reset_credits")))
     return redact({
         "label": account.get("label") or account.get("id") or fallback_label,
         "provider": account.get("provider"),
@@ -490,6 +491,8 @@ def normalize_account(account: dict[str, Any], fallback_label: str) -> dict[str,
         "status": status,
         "available": status in {"ok", "available", "active", "connected"},
         "windows": windows,
+        "reset_bank": reset_bank,
+        "reset_bank_text": account.get("reset_bank_text"),
         "message": account.get("message"),
     })
 
@@ -510,6 +513,8 @@ def collect_command_json_tracker(tracker: dict[str, Any]) -> dict[str, Any]:
             "provider": tracker.get("provider"),
             "plan": get_path(raw_account, tracker.get("plan_path", "plan")),
             "status": get_path(raw_account, tracker.get("status_path", "status"), "unknown"),
+            "reset_bank": get_path(raw_account, tracker.get("reset_bank_path", "reset_bank")),
+            "reset_bank_text": get_path(raw_account, tracker.get("reset_bank_text_path", "reset_bank_text")),
             "windows": [],
         }
         windows_path = tracker.get("windows_path", "windows")
@@ -555,6 +560,19 @@ def collect_command_regex_tracker(tracker: dict[str, Any]) -> dict[str, Any]:
             plan_match = re.search(tracker["plan_regex"], block, re.I | re.M)
             if plan_match:
                 plan = plan_match.groupdict().get("plan") or plan_match.group(1)
+        reset_bank = None
+        reset_bank_text = None
+        if tracker.get("reset_bank_regex"):
+            reset_match = re.search(tracker["reset_bank_regex"], block, re.I | re.M)
+            if reset_match:
+                gd = reset_match.groupdict()
+                reset_bank_text = gd.get("reset_bank_text") or reset_match.group(0).strip()
+                raw_bank = gd.get("reset_bank") or gd.get("banked_resets")
+                if raw_bank is not None:
+                    try:
+                        reset_bank = int(raw_bank)
+                    except ValueError:
+                        reset_bank = raw_bank
         windows = []
         for pattern in tracker.get("window_patterns", []):
             regex = re.compile(pattern["regex"], re.I | re.M)
@@ -574,6 +592,8 @@ def collect_command_regex_tracker(tracker: dict[str, Any]) -> dict[str, Any]:
             "provider": tracker.get("provider"),
             "plan": plan,
             "status": status,
+            "reset_bank": reset_bank,
+            "reset_bank_text": reset_bank_text,
             "windows": windows,
         }, tracker.get("label", tracker["id"])))
     return summarize_tracker(tracker, accounts)
@@ -656,7 +676,8 @@ function tone(s){s=String(s||'unknown').toLowerCase();return ['ok','active','ava
 function statusText(s){return ({ok:'доступ есть',available:'доступ есть',active:'active',connected:'connected',limited:'частично',missing:'нет токена',error:'ошибка',reauth:'re-auth',unknown:'unknown'})[s]||s||'unknown'}
 function serviceRow(s){return `<div class="row"><div><div class="name">${esc(s.label)}</div><div class="caption">${esc(s.caption||'')}</div></div><span class="pill ${tone(s.status)}">${esc(statusText(s.status))}</span></div>`}
 function percent(v){const n=Number(v);return Number.isFinite(n)?`${Math.round(n)}%`:`${esc(v??'?')}%`}
-function accountCard(a){const windows=(a.windows||[]).map(w=>{const used=Math.max(0,Math.min(100,Number(w.used_percent)||0));const usedText=percent(w.used_percent);const remainingText=percent(w.remaining_percent);const label=esc(w.label||w.key||'лимит');return `<div class="barline"><div class="limit-head"><span class="limit-title">${label}</span><span class="limit-stats"><strong>${remainingText}</strong> осталось · ${usedText} использовано</span></div><div class="bar" aria-label="${label}: использовано ${usedText}, осталось ${remainingText}"><div class="fill" style="width:${used}%"></div></div>${w.reset_text?`<div class="caption limit-note">${esc(w.reset_text)}</div>`:''}</div>`}).join('');return `<div class="account"><div class="account-head"><div><div class="name">${esc(a.label)}</div><div class="account-meta">${a.plan?`<span class="caption">plan ${esc(a.plan)}</span>`:(a.message?`<span class="caption">${esc(a.message)}</span>`:'')}<span class="status-badge ${tone(a.status)}">${esc(statusText(a.status))}</span></div></div></div>${windows?`<div class="bars">${windows}</div>`:''}</div>`}
+function resetBank(a){if(a.reset_bank_text)return `<span class="caption">${esc(a.reset_bank_text)}</span>`; if(a.reset_bank!==undefined&&a.reset_bank!==null&&a.reset_bank!=='')return `<span class="caption">reset bank: ${esc(a.reset_bank)}</span>`; return ''}
+function accountCard(a){const windows=(a.windows||[]).map(w=>{const used=Math.max(0,Math.min(100,Number(w.used_percent)||0));const usedText=percent(w.used_percent);const remainingText=percent(w.remaining_percent);const label=esc(w.label||w.key||'лимит');return `<div class="barline"><div class="limit-head"><span class="limit-title">${label}</span><span class="limit-stats"><strong>${remainingText}</strong> осталось · ${usedText} использовано</span></div><div class="bar" aria-label="${label}: использовано ${usedText}, осталось ${remainingText}"><div class="fill" style="width:${used}%"></div></div>${w.reset_text?`<div class="caption limit-note">${esc(w.reset_text)}</div>`:''}</div>`}).join('');return `<div class="account"><div class="account-head"><div><div class="name">${esc(a.label)}</div><div class="account-meta">${a.plan?`<span class="caption">plan ${esc(a.plan)}</span>`:(a.message?`<span class="caption">${esc(a.message)}</span>`:'')}${resetBank(a)}<span class="status-badge ${tone(a.status)}">${esc(statusText(a.status))}</span></div></div></div>${windows?`<div class="bars">${windows}</div>`:''}</div>`}
 function subscriptionCard(s){return `<section class="card"><h2>${esc(s.label||s.id)}</h2><div class="caption">${esc(s.provider||'subscription')} · доступно: ${esc(s.available_accounts??0)} · требует внимания: ${esc(s.attention_accounts??0)}</div>${s.error?`<pre>${esc(s.error)}</pre>`:''}${(s.accounts||[]).map(accountCard).join('')||'<div class="muted">Нет данных.</div>'}</section>`}
 function cronRow(j){return `<div class="row"><div><div class="name">${esc(j.name||j.id)}</div><div class="caption">${esc(j.schedule_display||j.schedule||'без расписания')}</div>${j.next_run_display?`<div class="caption">следующий запуск: ${esc(j.next_run_display)}</div>`:''}${j.script?`<div class="caption">script: ${esc(j.script)}</div>`:''}</div><span class="pill ${tone(j.state)}">${esc(j.state||'active')}</span></div>`}
 function render(data){$('verified').textContent='Telegram verified · '+esc(data.checked_at_display||data.checked_at); const subscriptions=data.subscriptions||[]; const cron=data.cron_jobs||[]; $('content').innerHTML=`<section class="card"><h2>Подключённые сервисы</h2>${(data.services||[]).map(serviceRow).join('')||'<div class="muted">Сервисы не настроены.</div>'}</section>${subscriptions.length?subscriptions.map(subscriptionCard).join(''):'<section class="card"><h2>Подписки</h2><div class="muted">Трекеры подписок не настроены.</div></section>'}<section class="card"><h2>Активные cron-задачи</h2>${cron.length?cron.map(cronRow).join(''):'<div class="muted">Активных задач нет.</div>'}</section>`;}

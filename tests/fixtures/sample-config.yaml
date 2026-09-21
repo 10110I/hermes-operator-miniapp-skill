@@ -21,6 +21,8 @@ subscription_trackers:
     account_label_path: label
     status_path: status
     plan_path: plan
+    reset_bank_path: reset_bank
+    reset_bank_text_path: reset_bank_text
     windows_path: windows
     window_label_path: label
     used_percent_path: used_percent

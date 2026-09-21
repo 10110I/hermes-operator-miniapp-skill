@@ -63,7 +63,7 @@ services:
 subscription_trackers:
   # Best option: a command that prints normalized JSON.
   # Shape expected by default:
-  # {"accounts":[{"label":"Account", "status":"ok", "plan":"Pro", "windows":[{"label":"5 hours", "used_percent":42, "remaining_percent":58, "reset_text":"reset in 2h"}]}]}
+  # {"accounts":[{"label":"Account", "status":"ok", "plan":"Pro", "reset_bank":1, "reset_bank_text":"reset bank: 1 доступен", "windows":[{"label":"5 hours", "used_percent":42, "remaining_percent":58, "reset_text":"сброс через 2ч"}]}]}
   - id: example-json-provider
     label: Example JSON Provider
     provider: example
@@ -74,6 +74,8 @@ subscription_trackers:
     account_label_path: label
     status_path: status
     plan_path: plan
+    reset_bank_path: reset_bank
+    reset_bank_text_path: reset_bank_text
     windows_path: windows
     window_label_path: label
     used_percent_path: used_percent
@@ -110,6 +112,8 @@ subscription_trackers:
       - label: Account 1
         status: ok
         plan: Pro
+        reset_bank: 1
+        reset_bank_text: 'reset bank: 1 доступен'
         windows:
           - key: monthly
             label: Месяц
