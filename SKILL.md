@@ -156,6 +156,8 @@ subscription_trackers:
     account_label_path: label
     status_path: status
     plan_path: plan
+    reset_bank_path: reset_bank
+    reset_bank_text_path: reset_bank_text
     windows_path: windows
     window_label_path: label
     used_percent_path: used_percent
@@ -168,6 +170,7 @@ Every tracker normalizes into:
 - `available_accounts`;
 - `attention_accounts`;
 - account `label`, `status`, `plan`;
+- optional account `reset_bank` and `reset_bank_text` for OpenAI-style reset credits;
 - window `label`, `used_percent`, `remaining_percent`, `reset_text`.
 
 This lets different providers use different collection scripts while the Mini App UI stays unchanged.
