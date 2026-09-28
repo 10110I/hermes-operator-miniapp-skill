@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+
 import time
 import urllib.parse
 from pathlib import Path
@@ -201,4 +202,94 @@ def test_telegram_init_data_signature_and_allowlist():
     with pytest.raises(PermissionError):
         app.validate_init_data(init_data, bot_token=bot_token, allowed_users=[42])
     with pytest.raises(PermissionError):
+        app.validate_init_data(init_data, bot_token=bot_token, allowed_users=[])
+    with pytest.raises(PermissionError):
+        app.validate_init_data(init_data, bot_token=bot_token, allowed_users=None)
+    with pytest.raises(PermissionError):
         app.validate_init_data(init_data.replace("hash=", "hash=bad"), bot_token=bot_token, allowed_users=[1002597417])
+
+
+def test_connected_users_normalizes_multiple_snapshots(tmp_path, monkeypatch):
+    snapshots = {
+        "friend-one": {"schema": 1, "host": "node-one", "gateway": "active", "disk_free_pct": 82,
+                       "mem_available_pct": 60, "load_1m": 0.4,
+                       "codex": {"status": "not_configured", "checked_at": app.now_iso()}},
+        "friend-two": {"schema": 1, "host": "node-two", "gateway": "active", "disk_free_pct": 36,
+                       "mem_available_pct": 49, "load_1m": 0.6,
+                       "codex": {"status": "ok", "checked_at": app.now_iso(),
+                                 "five_hour_used_pct": 94, "weekly_used_pct": 41}},
+    }
+    for name, snapshot in snapshots.items():
+        (tmp_path / name).write_text(json.dumps(snapshot))
+    monkeypatch.setattr(app, "run_command", lambda *_args, **_kw: pytest.fail("never run a command to read a remote user"))
+    users = app.collect_connected_users({"connected_users": [
+        {"id": "one", "label": "Первый", "type": "snapshot_json", "snapshot_file": str(tmp_path / "friend-one"), "expected_host": "node-one"},
+        {"id": "two", "label": "Второй", "type": "snapshot_json", "snapshot_file": str(tmp_path / "friend-two"), "expected_host": "node-two"},
+    ]})
+    assert len(users) == 2
+    assert users[0]["status"] == "ok" and users[0]["profile"]["status"] == "not_configured"
+    assert users[1]["status"] == "attention" and users[1]["profile"]["five_hour_used_pct"] == 94
+    assert users[1]["server"]["gateway"] == "active"
+    assert users[1]["server"]["disk_free_pct"] == 36
+
+
+def test_connected_user_rejects_invalid_or_mismatched_payload_and_never_echoes_it(tmp_path):
+    secret = "token=supersecret-should-not-leak"
+    payload = {"schema": 1, "host": "wrong-host", "gateway": secret, "disk_free_pct": 50,
+               "mem_available_pct": 50, "codex": {"status": secret, "checked_at": app.now_iso()}}
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps(payload))
+    config = {"connected_users": [{"id": "friend", "label": "Друг", "type": "snapshot_json",
+                                    "snapshot_file": str(snapshot), "expected_host": "expected"}]}
+    user = app.collect_connected_users(config)[0]
+    assert user["status"] == "unavailable"
+    assert "supersecret" not in json.dumps(user)
+    config["connected_users"][0]["expected_host"] = "wrong-host"
+    user = app.collect_connected_users(config)[0]
+    assert user["server"]["gateway"] == "unknown"
+    assert user["profile"]["status"] == "usage_unavailable"
+    assert "supersecret" not in json.dumps(user)
+
+
+def test_connected_user_stale_snapshot_and_missing_file(tmp_path):
+    old = "2026-01-01T00:00:00+00:00"
+    payload = {"schema": 1, "host": "node", "gateway": "active", "disk_free_pct": 82,
+               "mem_available_pct": 60, "codex": {"status": "ok", "checked_at": old,
+                                                     "five_hour_used_pct": 10}}
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps(payload))
+    config = {"connected_users": [{"id": "friend", "label": "Друг", "type": "snapshot_json",
+                                    "snapshot_file": str(snapshot), "expected_host": "node"}]}
+    user = app.collect_connected_users(config)[0]
+    assert user["status"] == "attention" and user["profile"]["stale"] is True
+    snapshot.unlink()
+    user = app.collect_connected_users(config)[0]
+    assert user["status"] == "unavailable" and "secret" not in json.dumps(user)
+
+def test_connected_user_missing_limits_and_exact_threshold(tmp_path):
+    snapshot = tmp_path / "snapshot.json"
+    payload = {"schema": 1, "host": "node", "gateway": "active", "disk_free_pct": 14.9,
+               "mem_available_pct": 50, "codex": {"status": "ok", "checked_at": app.now_iso(),
+                                                  "five_hour_used_pct": None, "weekly_used_pct": None}}
+    snapshot.write_text(json.dumps(payload))
+    config = {"connected_users": [{"id": "friend", "type": "snapshot_json", "snapshot_file": str(snapshot), "expected_host": "node"}]}
+    user = app.collect_connected_users(config)[0]
+    assert user["status"] == "attention"
+    assert user["profile"]["status"] == "usage_unavailable"
+    assert user["server"]["disk_free_pct"] == 15  # display rounding must not hide 14.9 alert
+
+def test_connected_user_caps_snapshot_file_before_json_parsing(tmp_path):
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text('x' * 5000 + 'token=secret')
+    user = app.collect_connected_user({"id": "friend", "type": "snapshot_json", "snapshot_file": str(snapshot), "expected_host": "node"})
+    assert user["status"] == "unavailable" and "secret" not in json.dumps(user)
+
+
+def test_connected_users_tab_has_navigation_and_empty_state():
+    html = app.MINIAPP_HTML
+    assert 'id="connected-tab"' in html
+    assert 'id="overview-tab"' in html
+    assert 'role="tablist"' in html
+    assert 'aria-selected' in html
+    assert 'id="connected-panel"' in html
+    assert "Подключённых пользователей пока нет" in html

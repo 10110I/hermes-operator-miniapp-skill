@@ -24,6 +24,7 @@ Use when a user wants:
 - a Telegram Mini App status panel for Hermes;
 - read-only visibility into connected services and cron jobs;
 - subscription/quota bars for whatever providers they actually use;
+- monitoring of independently connected users' sanitized server and provider snapshots;
 - a setup flow that asks which providers/subscriptions to track.
 
 Do not use for:
@@ -78,6 +79,12 @@ Before writing config, ask the user these questions in one short batch:
 9. Where will it be hosted: same VPS as Hermes, home machine behind a tunnel, or a separate backend with a sanitized snapshot collector? Default to same host as Hermes.
 
 For installation details, read `references/installation.md`. For service discovery details, read `references/service-discovery.md`. For hosting details, read `references/hosting.md`. For the subscription model details, read `references/subscription-tracker-model.md`.
+
+When adding a tab to an **existing** Mini App, first resolve the registered
+Telegram menu URL and public proxy route. Hermes may also have a different
+built-in `/miniapp` behind a separate port; editing it does not update the
+public page. Preserve the existing cards and back up any untracked local
+customizations before changing the actual serving code.
 
 ## Quick Start
 
@@ -174,6 +181,17 @@ Every tracker normalizes into:
 - window `label`, `used_percent`, `remaining_percent`, `reset_text`.
 
 This lets different providers use different collection scripts while the Mini App UI stays unchanged.
+
+## Connected User Snapshots
+
+Use `connected_users` entries with `type: snapshot_json`, a private local
+`snapshot_file`, and `expected_host`. Schedule one independent read-only
+collector per user to write an atomic, `0600` JSON snapshot from a restricted
+forced SSH command. The web request must **only** read bounded local files:
+never SSH on page load, run A2A, access the peer's normal Hermes profile, or
+reuse its OAuth credentials. Reject an empty Telegram allowlist. Show both
+snapshot freshness and missing/unknown quota windows honestly. See the
+README's connected users section and `templates/config.yaml` for the schema.
 
 ## Security Rules
 
