@@ -7,7 +7,8 @@ This repository packages a Hermes skill plus helper scripts for a read-only Tele
 
 - connected service/access checks;
 - provider-neutral subscription/quota trackers;
-- active Hermes cron jobs with human-readable schedules and local timezone display.
+- active Hermes cron jobs with human-readable schedules and local timezone display;
+- connected users' read-only server and provider snapshots, independently collected.
 
 It is based on a real Hermes operator panel, but the subscription tracking was redesigned so users are not locked to one provider such as `openai-codex`.
 
@@ -108,6 +109,37 @@ Supported tracker types:
 See [`references/service-discovery.md`](references/service-discovery.md), [`references/subscription-tracker-model.md`](references/subscription-tracker-model.md), and [`templates/config.yaml`](templates/config.yaml).
 
 ## Security model
+
+### Connected users tab
+
+The **Подключённые** tab shows one card per enabled `connected_users` entry in
+configured order (up to 100). This is a read-only operations view, not a remote
+agent control surface. Each entry uses `type: snapshot_json`, `snapshot_file`,
+`expected_host`, and optional `stale_after_seconds` (capped at one hour). An
+independent scheduled collector writes each private local snapshot atomically
+with mode `0600`; opening or refreshing the Mini App only reads at most 4097
+bytes per file and never triggers SSH. A disconnected collector removes or
+stops refreshing its snapshot, so the tab reports unavailable or stale.
+Keep real hostnames, addresses, SSH key paths and names in the private runtime
+config and collector, **not in this repository**. Adding another peer requires
+one isolated collector and one corresponding config entry.
+
+The snapshot must contain only a sanitized JSON object shaped as follows:
+
+```json
+{"schema":1,"host":"example-node","gateway":"active","disk_free_pct":82,"mem_available_pct":61,"collected_at":"2026-09-28T12:00:00+00:00","codex":{"status":"not_configured","checked_at":"2026-09-28T12:00:00+00:00","five_hour_used_pct":null,"weekly_used_pct":null}}
+```
+
+Use a dedicated Unix monitor account with a forced SSH command that emits only
+allowlisted states and metrics. Do **not** allow arbitrary SSH commands, use
+the peer's normal Hermes agent/A2A profile, or copy their OAuth credentials.
+The app validates schema and expected host, bounds numeric fields, ignores
+unexpected fields, and never returns raw snapshots or errors. `not_configured`
+means Codex has not been authorized; it does not fabricate usage percentages.
+`ok` without both percentage windows is shown as `usage_unavailable`, not as
+healthy. The tab requires the same signed Telegram WebApp request and **nonempty**
+owner allowlist as the rest of `/api/status`. Refresh reloads the last collector
+snapshot, not the remote server. The UI displays its timestamp.
 
 - The HTML entrypoint can be public.
 - `/api/status` validates Telegram WebApp `initData` server-side.

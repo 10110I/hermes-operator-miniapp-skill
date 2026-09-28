@@ -121,6 +121,18 @@ subscription_trackers:
             remaining_percent: 90
             reset_text: обновляется вручную
 
+# Optional: one entry per independently collected user. A separate scheduled
+# monitor (with a forced-command/read-only SSH principal) writes a restricted
+# local JSON snapshot; the web app never connects over SSH or invokes A2A.
+connected_users:
+  - id: example-peer
+    label: Example peer
+    type: snapshot_json
+    enabled: false
+    expected_host: example-node
+    stale_after_seconds: 3600
+    snapshot_file: /path/to/private/miniapp-snapshot.json
+
 cron:
   enabled: true
   command: hermes cron list --all
