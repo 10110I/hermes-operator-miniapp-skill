@@ -658,6 +658,16 @@ def remote_percent(value: Any) -> int | None:
     return round(value)
 
 
+def remote_reset_display(value: Any, zone: ZoneInfo) -> str | None:
+    if not isinstance(value, str) or len(value) > 40:
+        return None
+    try:
+        stamp = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return stamp.astimezone(zone).strftime("%d.%m.%Y %H:%M %Z") if stamp.tzinfo else None
+    except (ValueError, OverflowError):
+        return None
+
+
 def collect_connected_user(item: dict[str, Any], zone: ZoneInfo | None = None) -> dict[str, Any]:
     """Read a fixed diagnostic snapshot; never return raw remote data or errors."""
     result: dict[str, Any] = {
@@ -730,7 +740,11 @@ def collect_connected_user(item: dict[str, Any], zone: ZoneInfo | None = None) -
             "status": "attention" if problems else "ok",
             "server": {"gateway": gateway, "disk_free_pct": disk, "mem_available_pct": memory},
             "profile": {"status": codex_status, "five_hour_used_pct": five,
-                        "weekly_used_pct": week, "stale": stale, "checked_at_display": checked_display},
+                        "weekly_used_pct": week, "stale": stale, "checked_at_display": checked_display,
+                        "reset_bank": raw_profile.get("reset_bank") if type(raw_profile.get("reset_bank")) is int
+                                      and 0 <= raw_profile["reset_bank"] <= 1000000 else None,
+                        "five_hour_reset_display": remote_reset_display(raw_profile.get("five_hour_reset_at"), zone or ZoneInfo(DEFAULT_TIME_ZONE)),
+                        "weekly_reset_display": remote_reset_display(raw_profile.get("weekly_reset_at"), zone or ZoneInfo(DEFAULT_TIME_ZONE))},
         })
     except (OSError, ValueError, TypeError, UnicodeDecodeError):
         pass
@@ -782,7 +796,7 @@ function accountCard(a){const windows=(a.windows||[]).map(w=>{const used=Math.ma
 function subscriptionCard(s){return `<section class="card"><h2>${esc(s.label||s.id)}</h2><div class="caption">${esc(s.provider||'subscription')} · доступно: ${esc(s.available_accounts??0)} · требует внимания: ${esc(s.attention_accounts??0)}</div>${s.error?`<pre>${esc(s.error)}</pre>`:''}${(s.accounts||[]).map(accountCard).join('')||'<div class="muted">Нет данных.</div>'}</section>`}
 function cronRow(j){return `<div class="row"><div><div class="name">${esc(j.name||j.id)}</div><div class="caption">${esc(j.schedule_display||j.schedule||'без расписания')}</div>${j.next_run_display?`<div class="caption">следующий запуск: ${esc(j.next_run_display)}</div>`:''}${j.script?`<div class="caption">script: ${esc(j.script)}</div>`:''}</div><span class="pill ${tone(j.state)}">${esc(j.state||'active')}</span></div>`}
 function metric(label,value){return `<div class="metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`}
-function remoteCard(u){const s=u.server||{},p=u.profile||{};if(u.status==='unavailable')return `<section class="card"><div class="remote-title"><h2>${esc(u.label)}</h2><span class="pill unavailable">нет связи</span></div><div class="caption">Диагностика недоступна. Данные профиля не считывались.</div></section>`;const note=p.status==='not_configured'?'Codex ещё не подключён':({ok:'Codex подключён',reauth_needed:'Нужен повторный вход',limit_reached:'Лимит исчерпан',usage_unavailable:'Лимиты недоступны',unsupported_endpoint:'Неизвестный источник лимитов',snapshot_missing:'Нет снимка лимитов'})[p.status]||'Статус неизвестен';return `<section class="card"><div class="remote-title"><h2>${esc(u.label)}</h2><span class="pill ${tone(u.status)}">${u.status==='ok'?(p.status==='not_configured'?'сервер работает':'в норме'):'нужно внимание'}</span></div><div class="remote-section"><h3>Сервер</h3><div class="remote-grid">${metric('Gateway',s.gateway==='active'?'Работает':s.gateway||'Неизвестно')}${metric('Свободно на диске',s.disk_free_pct==null?'—':s.disk_free_pct+'%')}${metric('Доступно памяти',s.mem_available_pct==null?'—':s.mem_available_pct+'%')}</div></div><div class="remote-section"><h3>Профиль</h3><div class="caption">${esc(note)}</div><div class="remote-grid">${metric('Codex · 5 часов',p.five_hour_used_pct==null?'Нет данных':p.five_hour_used_pct+'% использовано')}${metric('Codex · неделя',p.weekly_used_pct==null?'Нет данных':p.weekly_used_pct+'% использовано')}</div></div><div class="remote-foot">${p.stale?'⚠ Данные устарели · ':''}Снимок: ${esc(p.checked_at_display||'недоступен')}</div></section>`}
+function remoteCard(u){const s=u.server||{},p=u.profile||{};if(u.status==='unavailable')return `<section class="card"><div class="remote-title"><h2>${esc(u.label)}</h2><span class="pill unavailable">нет связи</span></div><div class="caption">Диагностика недоступна. Данные профиля не считывались.</div></section>`;const note=p.status==='not_configured'?'Codex ещё не подключён':({ok:'Codex подключён',reauth_needed:'Нужен повторный вход',limit_reached:'Лимит исчерпан',usage_unavailable:'Лимиты недоступны',unsupported_endpoint:'Неизвестный источник лимитов',snapshot_missing:'Нет снимка лимитов'})[p.status]||'Статус неизвестен';return `<section class="card"><div class="remote-title"><h2>${esc(u.label)}</h2><span class="pill ${tone(u.status)}">${u.status==='ok'?(p.status==='not_configured'?'сервер работает':'в норме'):'нужно внимание'}</span></div><div class="remote-section"><h3>Сервер</h3><div class="remote-grid">${metric('Gateway',s.gateway==='active'?'Работает':s.gateway||'Неизвестно')}${metric('Свободно на диске',s.disk_free_pct==null?'—':s.disk_free_pct+'%')}${metric('Доступно памяти',s.mem_available_pct==null?'—':s.mem_available_pct+'%')}</div></div><div class="remote-section"><h3>Профиль</h3><div class="caption">${esc(note)}</div><div class="remote-grid">${metric('Codex · 5 часов',p.five_hour_used_pct==null?'Нет данных':p.five_hour_used_pct+'% использовано')}${metric('Codex · неделя',p.weekly_used_pct==null?'Нет данных':p.weekly_used_pct+'% использовано')}${metric('Доступные ресеты',p.reset_bank==null?'Нет данных':p.reset_bank)}${metric('Сброс · 5 часов',p.five_hour_reset_display||'Нет данных')}${metric('Сброс · неделя',p.weekly_reset_display||'Нет данных')}</div></div><div class="remote-foot">${p.stale?'⚠ Данные устарели · ':''}Снимок: ${esc(p.checked_at_display||'недоступен')}</div></section>`}
 function render(data){$('verified').textContent='Telegram verified · '+esc(data.checked_at_display||data.checked_at); const subscriptions=data.subscriptions||[]; const cron=data.cron_jobs||[]; $('content').innerHTML=`<section class="card"><h2>Подключённые сервисы</h2>${(data.services||[]).map(serviceRow).join('')||'<div class="muted">Сервисы не настроены.</div>'}</section>${subscriptions.length?subscriptions.map(subscriptionCard).join(''):'<section class="card"><h2>Подписки</h2><div class="muted">Трекеры подписок не настроены.</div></section>'}<section class="card"><h2>Активные cron-задачи</h2>${cron.length?cron.map(cronRow).join(''):'<div class="muted">Активных задач нет.</div>'}</section>`;const users=data.connected_users||[];$('connected-content').innerHTML=users.length?users.map(remoteCard).join(''):'<section class="card"><h2>Подключённые пользователи</h2><div class="muted">Подключённых пользователей пока нет.</div></section>';}
 function selectTab(tab){const connected=tab==='connected';$('overview-tab').setAttribute('aria-selected',connected?'false':'true');$('connected-tab').setAttribute('aria-selected',connected?'true':'false');$('overview-panel').hidden=connected;$('connected-panel').hidden=!connected}
 function setRefreshState(active){const b=$('refresh'); if(!b)return; b.disabled=!!active; b.textContent=active?'Обновляю…':'Обновить'; b.setAttribute('aria-busy',active?'true':'false')}

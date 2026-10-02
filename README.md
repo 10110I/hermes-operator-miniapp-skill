@@ -1,5 +1,8 @@
 # Hermes Operator Mini App Skill
 
+Connected-user cards also show available reset credits and separate 5-hour/weekly reset timestamps in the configured timezone. Snapshot producers may supply `codex.reset_bank` (non-negative integer), `codex.five_hour_reset_at` and `codex.weekly_reset_at` (timezone-aware ISO timestamps). Missing or invalid metadata is shown as «Нет данных», not zero. Existing snapshot freshness warnings apply to reset data too. These are read-only fields; no reset is consumed.
+
+
 Creation date: 2026-09-20
 Status: working initial public release
 
