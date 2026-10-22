@@ -49,3 +49,4 @@ cron:
   enabled: true
   command: python3 -c "print(open('tests/fixtures/cron.txt', encoding='utf-8').read())"
   timeout_seconds: 10
+  edit_allowed_users: [123456789]

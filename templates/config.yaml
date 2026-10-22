@@ -125,3 +125,5 @@ cron:
   enabled: true
   command: hermes cron list --all
   timeout_seconds: 60
+  # Empty list disables cron edits. Set owner IDs explicitly; an absent key inherits telegram.allowed_users.
+  edit_allowed_users: []

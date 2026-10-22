@@ -20,6 +20,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -148,6 +149,21 @@ def validate_init_data(init_data: str, *, bot_token: str, allowed_users: list[in
     return {"id": user_id, "first_name": user.get("first_name"), "username": user.get("username")}
 
 
+def authenticate_telegram_request(init_data: str, telegram: dict[str, Any], *, allowed_users: list[int] | None = None, require_allowlist: bool = False) -> dict[str, Any]:
+    token_env = str(telegram.get("bot_token_env", "TELEGRAM_BOT_TOKEN"))
+    bot_token = os.environ.get(token_env, "")
+    if not bot_token:
+        raise PermissionError(f"bot token env var is not configured: {token_env}")
+    allowlist = telegram.get("allowed_users", []) if allowed_users is None else allowed_users
+    try:
+        allowed = [int(value) for value in allowlist]
+    except (TypeError, ValueError):
+        raise PermissionError("Telegram user allowlist is invalid") from None
+    if not allowed:
+        raise PermissionError("Cron edits require an explicit editor allowlist" if require_allowlist else "Telegram user allowlist is empty")
+    return validate_init_data(init_data, bot_token=bot_token, allowed_users=allowed, max_age_seconds=int(telegram.get("max_age_seconds", 86400)))
+
+
 # ---------------------------------------------------------------------------
 # Time and cron helpers
 
@@ -256,17 +272,86 @@ def humanize_schedule(schedule: str | None, zone: ZoneInfo) -> str:
     return text
 
 
+CRON_PERIODICITY_MINUTES = (1, 2, 5, 10, 15, 30, 60, 120, 360, 720, 1440, 2880, 4320, 7200, 10080, 20160, 43200)
+CRON_EDITABLE_STATES = {"active", "paused", "scheduled"}
+CRON_REASONING_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+CRON_ID_PATTERN = re.compile(r"^[0-9a-f]{12}$")
+
+
+def schedule_period_minutes(schedule: Any) -> int | None:
+    if isinstance(schedule, dict):
+        minutes = schedule.get("minutes")
+        if schedule.get("kind") == "interval" and type(minutes) is int and minutes > 0:
+            return minutes
+        schedule = schedule.get("display") or schedule.get("expr") or ""
+    text = str(schedule or "").strip().lower()
+    if text.startswith("once "):
+        return None
+    match = re.fullmatch(r"every\s+(\d+)\s*(m|min|mins|minutes|h|hr|hrs|hours|d|day|days|w|week|weeks)", text)
+    if match:
+        amount = int(match.group(1))
+        unit = match.group(2)
+        factor = 1 if unit.startswith("m") else (60 if unit.startswith(("h",)) else (1440 if unit.startswith("d") else 10080))
+        return max(1, amount * factor)
+
+    fields = text.split()
+    if len(fields) != 5:
+        return None
+    minute, hour, day, month, weekday = fields
+    if minute.startswith("*/") and all(value == "*" for value in (hour, day, month, weekday)):
+        try:
+            return max(1, int(minute[2:]))
+        except ValueError:
+            return None
+    if hour.startswith("*/") and minute.isdigit() and day == month == weekday == "*":
+        try:
+            return max(1, int(hour[2:]) * 60)
+        except ValueError:
+            return None
+    if minute.isdigit() and hour.isdigit() and day == month == weekday == "*":
+        return 1440
+    if minute.isdigit() and hour.isdigit() and day == month == "*" and weekday != "*":
+        return 10080
+    if minute.isdigit() and hour.isdigit() and day.isdigit() and month == "*" and weekday == "*":
+        return 43200
+    return None
+
+
+def periodicity_index(minutes: int | None) -> int | None:
+    if minutes is None:
+        return None
+    return min(range(len(CRON_PERIODICITY_MINUTES)), key=lambda index: abs(CRON_PERIODICITY_MINUTES[index] - minutes))
+
+
+def schedule_kind(schedule: str) -> str:
+    text = str(schedule or "").strip().lower()
+    if text.startswith("once "):
+        return "once"
+    if text.startswith("every ") and schedule_period_minutes(text) is not None:
+        return "interval"
+    return "cron"
+
+
 def parse_cron_list(output: str, zone: ZoneInfo) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     first = re.compile(r"^\s*([0-9a-f]{12})\s+\[([^\]]+)\]")
     field = re.compile(r"^\s*([A-Za-z ]+):\s+(.*)$")
+
+    def append_current() -> None:
+        if not current or current.get("state") not in CRON_EDITABLE_STATES:
+            return
+        minutes = schedule_period_minutes(current.get("schedule", ""))
+        current["schedule_kind"] = schedule_kind(current.get("schedule", ""))
+        current["schedule_minutes"] = minutes
+        current["periodicity_index"] = periodicity_index(minutes)
+        jobs.append(current)
+
     for raw in output.splitlines():
         first_match = first.match(raw)
         if first_match:
-            if current and current.get("state") == "active":
-                jobs.append(current)
-            current = {"id": first_match.group(1), "state": first_match.group(2), "name": "", "schedule": "", "next_run": None, "script": None}
+            append_current()
+            current = {"id": first_match.group(1), "state": first_match.group(2).strip().lower(), "name": "", "schedule": "", "next_run": None, "script": None}
             continue
         if not current:
             continue
@@ -281,8 +366,7 @@ def parse_cron_list(output: str, zone: ZoneInfo) -> list[dict[str, Any]]:
             current["schedule_display"] = humanize_schedule(value, zone)
         elif key == "next_run":
             current["next_run_display"] = format_local(value, zone)
-    if current and current.get("state") == "active":
-        jobs.append(current)
+    append_current()
     return jobs
 
 
@@ -647,9 +731,171 @@ def collect_cron(config: dict[str, Any]) -> list[dict[str, Any]]:
         return [{"id": "cron-error", "state": "error", "name": "Cron недоступен", "schedule_display": "ошибка", "error": str(redact(exc))[:240]}]
 
 
+_CRON_MODEL_CATALOG_CACHE: dict[str, tuple[float, list[str]]] = {}
+_CRON_MODEL_CATALOG_LOCK = threading.Lock()
+_CRON_MODEL_CATALOG_TTL_SECONDS = 900
+
+
+def encode_cron_model_choice(provider: str, model: str) -> str:
+    return json.dumps([provider, model], ensure_ascii=False, separators=(",", ":"))
+
+
+def _model_parts(model: Any, provider: Any = None) -> tuple[str, str]:
+    provider_text = str(provider or "").strip()
+    model_text = str(model or "").strip()
+    if provider_text and model_text.startswith(provider_text + "/"):
+        model_text = model_text[len(provider_text) + 1:]
+    elif not provider_text and "/" in model_text:
+        possible_provider, remainder = model_text.split("/", 1)
+        if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", possible_provider):
+            provider_text, model_text = possible_provider, remainder
+    return provider_text, model_text
+
+
+def cron_job_records() -> list[dict[str, Any]]:
+    """Read cron metadata from Hermes storage; never return prompts or raw records."""
+    try:
+        from cron.jobs import load_jobs
+
+        records = load_jobs()
+        if isinstance(records, dict):
+            records = records.get("jobs", [])
+        return [record for record in records if isinstance(record, dict)] if isinstance(records, list) else []
+    except Exception:
+        return []
+
+
+def enrich_cron_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    stored = {str(record.get("id")): record for record in cron_job_records() if record.get("id")}
+    for job in jobs:
+        record = stored.get(str(job.get("id")), {})
+        for key in ("model", "provider", "reasoning_effort"):
+            if key in record:
+                job[key] = record.get(key)
+        provider, model = str(job.get("provider") or ""), str(job.get("model") or "")
+        job["provider"] = provider or None
+        job["model"] = model or None
+        job["model_choice"] = encode_cron_model_choice(provider, model) if provider or model else "default"
+        reasoning = str(job.get("reasoning_effort") or "").lower()
+        job["reasoning_index"] = CRON_REASONING_LEVELS.index(reasoning) + 1 if reasoning in CRON_REASONING_LEVELS else 0
+    return jobs
+
+
+def _provider_model_ids(provider: str) -> list[str]:
+    now = time.monotonic()
+    with _CRON_MODEL_CATALOG_LOCK:
+        cached = _CRON_MODEL_CATALOG_CACHE.get(provider)
+        if cached and now - cached[0] < _CRON_MODEL_CATALOG_TTL_SECONDS:
+            return list(cached[1])
+    models: list[str] = []
+    try:
+        from hermes_cli.models import curated_models_for_provider
+
+        for item in curated_models_for_provider(provider):
+            model = item[0] if isinstance(item, (tuple, list)) and item else item
+            if isinstance(model, dict):
+                model = model.get("id") or model.get("model")
+            if isinstance(model, str) and model.strip() and len(model) <= 300 and not any(ch in model for ch in "\r\n\x00"):
+                models.append(model.strip())
+    except Exception:
+        pass
+    models = list(dict.fromkeys(models))[:250]
+    with _CRON_MODEL_CATALOG_LOCK:
+        _CRON_MODEL_CATALOG_CACHE[provider] = (now, models)
+    return models
+
+
+def cron_model_options(config: dict[str, Any], jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    hermes_config: dict[str, Any] = {}
+    try:
+        hermes_config = load_config(hermes_home() / "config.yaml")
+    except Exception:
+        pass
+    model_cfg = hermes_config.get("model") if isinstance(hermes_config.get("model"), dict) else {}
+    default_provider, default_model = _model_parts(model_cfg.get("default"), model_cfg.get("provider"))
+    providers = {default_provider} if default_provider else set()
+    current_models: list[tuple[str, str]] = []
+    for job in jobs:
+        provider, model = str(job.get("provider") or ""), str(job.get("model") or "")
+        if provider:
+            providers.add(provider)
+        if provider or model:
+            current_models.append((provider, model))
+    if default_provider and default_model:
+        current_models.append((default_provider, default_model))
+
+    by_pair: dict[tuple[str, str], dict[str, str]] = {}
+    for provider in sorted(p for p in providers if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", p)):
+        for model in _provider_model_ids(provider):
+            by_pair[(provider, model)] = {"value": encode_cron_model_choice(provider, model), "provider": provider, "model": model, "label": f"{provider} · {model}"}
+    for provider, model in current_models:
+        if len(provider) <= 64 and len(model) <= 300:
+            by_pair.setdefault((provider, model), {"value": encode_cron_model_choice(provider, model), "provider": provider, "model": model, "label": f"{provider or 'Провайдер по умолчанию'} · {model or 'Модель по умолчанию'}"})
+    default_label = f"По умолчанию · {default_provider}/{default_model}" if default_provider and default_model else "По умолчанию"
+    return [{"value": "default", "provider": None, "model": None, "label": default_label}, *[by_pair[key] for key in sorted(by_pair)]]
+
+
+def edit_cron_job(config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    if not config.get("cron", {}).get("enabled", True):
+        raise ValueError("Cron management is disabled")
+    job_id = str(payload.get("job_id") or "")
+    if not CRON_ID_PATTERN.fullmatch(job_id):
+        raise ValueError("Invalid cron job id")
+    listed = run_command(["hermes", "cron", "list", "--all"], timeout=60)
+    if listed.returncode != 0:
+        raise ValueError(str(redact(listed.stderr or listed.stdout or "Could not read cron jobs"))[:240])
+    jobs = enrich_cron_jobs(parse_cron_list(listed.stdout, tz(config)))
+    job = next((item for item in jobs if item.get("id") == job_id), None)
+    if not job or job.get("state") not in CRON_EDITABLE_STATES:
+        raise ValueError("Cron job was not found or is not editable")
+
+    model_choice = payload.get("model_choice")
+    options = {item["value"]: item for item in cron_model_options(config, jobs)}
+    if not isinstance(model_choice, str) or model_choice not in options:
+        raise ValueError("Selected model is not available")
+    effort = payload.get("reasoning_effort")
+    if not isinstance(effort, str) or effort not in ("", *CRON_REASONING_LEVELS):
+        raise ValueError("Invalid reasoning effort")
+
+    command = ["hermes", "cron", "edit", job_id]
+    selected = options[model_choice]
+    command.extend(["--model", str(selected.get("model") or ""), "--provider", str(selected.get("provider") or "")])
+    command.extend(["--reasoning-effort", effort])
+    target_index = payload.get("periodicity_index")
+    new_schedule = str(job.get("schedule") or "")
+    periodicity_changed = False
+    if target_index is not None:
+        if type(target_index) is not int or not 0 <= target_index < len(CRON_PERIODICITY_MINUTES):
+            raise ValueError("Invalid cron periodicity")
+        if job.get("schedule_kind") == "once":
+            raise ValueError("One-time cron jobs do not have a periodicity")
+        if target_index != job.get("periodicity_index"):
+            minutes = CRON_PERIODICITY_MINUTES[target_index]
+            new_schedule = f"every {minutes}m"
+            periodicity_changed = True
+            command.extend(["--schedule", new_schedule])
+
+    edited = run_command(command, timeout=60)
+    if edited.returncode != 0:
+        raise ValueError(str(redact(edited.stderr or edited.stdout or "Could not update cron job"))[:240])
+
+    saved = next((record for record in cron_job_records() if str(record.get("id")) == job_id), None)
+    if saved is None:
+        raise ValueError("Cron edit returned success but the saved job could not be verified")
+    saved_provider, saved_model = str(saved.get("provider") or ""), str(saved.get("model") or "")
+    if (saved_provider, saved_model) != (str(selected.get("provider") or ""), str(selected.get("model") or "")):
+        raise ValueError("Cron edit returned success but the saved model could not be verified")
+    if str(saved.get("reasoning_effort") or "") != effort:
+        raise ValueError("Cron edit returned success but the saved reasoning could not be verified")
+    if periodicity_changed and schedule_period_minutes(saved.get("schedule")) != CRON_PERIODICITY_MINUTES[target_index]:
+        raise ValueError("Cron edit returned success but the saved periodicity could not be verified")
+    return {"ok": True, "job_id": job_id, "schedule": new_schedule, "message": "Параметры задачи сохранены"}
+
+
 def collect_status(config: dict[str, Any]) -> dict[str, Any]:
     zone = tz(config)
     checked_at = now_iso()
+    cron_jobs = enrich_cron_jobs(collect_cron(config))
     return redact({
         "ok": True,
         "checked_at": checked_at,
@@ -657,7 +903,8 @@ def collect_status(config: dict[str, Any]) -> dict[str, Any]:
         "time_zone": zone.key,
         "services": collect_services(config),
         "subscriptions": collect_subscriptions(config),
-        "cron_jobs": collect_cron(config),
+        "cron_jobs": cron_jobs,
+        "cron_models": cron_model_options(config, cron_jobs) if cron_jobs else [],
     })
 
 
@@ -667,7 +914,9 @@ def collect_status(config: dict[str, Any]) -> dict[str, Any]:
 MINIAPP_HTML = """<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Hermes Operator Status</title><style>
-:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#08111f;color:#eef6ff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#155e7566,#08111f 46%,#020617)}.wrap{max-width:640px;margin:0 auto;padding:18px 14px 42px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.eyebrow{font-size:12px;color:#93c5fd}.title{margin:2px 0 0;font-size:28px;letter-spacing:-.04em}.muted{color:#94a3b8}.small{font-size:12px}.card{border:1px solid #ffffff18;border-radius:24px;background:#0b1220d9;padding:15px;margin-top:12px;box-shadow:0 12px 34px #0005}.card h2{font-size:17px;margin:0 0 12px}.row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #ffffff10}.row:first-of-type{border-top:0}.name{font-weight:750}.caption{font-size:12px;color:#94a3b8;margin-top:3px}.pill{font-size:11px;text-transform:uppercase;border-radius:999px;border:1px solid #ffffff24;padding:5px 8px;background:#ffffff10;white-space:nowrap}.ok{color:#86efac}.error,.reauth{color:#fca5a5}.limited,.unknown{color:#fde68a}.missing{color:#cbd5e1}.account{display:block;padding:13px 0;border-top:1px solid #ffffff10}.account:first-of-type{border-top:0}.account-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.account-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px}.account-meta .caption{margin-top:0}.status-badge{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-radius:999px;border:1px solid #ffffff24;padding:3px 7px;background:#ffffff0d;white-space:nowrap}.bars{display:grid;gap:8px;margin-top:10px}.barline{display:grid;gap:6px;padding:9px;border-radius:14px;background:#ffffff08;border:1px solid #ffffff0d}.limit-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}.limit-title{font-size:12px;font-weight:800;color:#e2e8f0}.limit-stats{font-size:12px;color:#94a3b8}.limit-stats strong{color:#e2e8f0}.limit-note{margin-top:0}.bar{height:9px;background:#ffffff14;border-radius:999px;overflow:hidden}.fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#eab308,#ef4444)}button{border:0;border-radius:999px;padding:10px 14px;background:#38bdf8;color:#04111f;font-weight:800}button:disabled{opacity:.72;cursor:progress}.hidden{display:none}pre{white-space:pre-wrap;word-break:break-word;color:#fecaca}.footer{margin-top:14px;text-align:center;color:#64748b;font-size:11px}</style></head>
+:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#08111f;color:#eef6ff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#155e7566,#08111f 46%,#020617)}.wrap{max-width:640px;margin:0 auto;padding:18px 14px 42px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.eyebrow{font-size:12px;color:#93c5fd}.title{margin:2px 0 0;font-size:28px;letter-spacing:-.04em}.muted{color:#94a3b8}.small{font-size:12px}.card{border:1px solid #ffffff18;border-radius:24px;background:#0b1220d9;padding:15px;margin-top:12px;box-shadow:0 12px 34px #0005}.card h2{font-size:17px;margin:0 0 12px}.row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #ffffff10}.row:first-of-type{border-top:0}.name{font-weight:750}.caption{font-size:12px;color:#94a3b8;margin-top:3px}.pill{font-size:11px;text-transform:uppercase;border-radius:999px;border:1px solid #ffffff24;padding:5px 8px;background:#ffffff10;white-space:nowrap}.ok{color:#86efac}.error,.reauth{color:#fca5a5}.limited,.unknown{color:#fde68a}.missing{color:#cbd5e1}.account{display:block;padding:13px 0;border-top:1px solid #ffffff10}.account:first-of-type{border-top:0}.account-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.account-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px}.account-meta .caption{margin-top:0}.status-badge{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-radius:999px;border:1px solid #ffffff24;padding:3px 7px;background:#ffffff0d;white-space:nowrap}.bars{display:grid;gap:8px;margin-top:10px}.barline{display:grid;gap:6px;padding:9px;border-radius:14px;background:#ffffff08;border:1px solid #ffffff0d}.limit-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}.limit-title{font-size:12px;font-weight:800;color:#e2e8f0}.limit-stats{font-size:12px;color:#94a3b8}.limit-stats strong{color:#e2e8f0}.limit-note{margin-top:0}.bar{height:9px;background:#ffffff14;border-radius:999px;overflow:hidden}.fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#eab308,#ef4444)}button{border:0;border-radius:999px;padding:10px 14px;background:#38bdf8;color:#04111f;font-weight:800}button:disabled{opacity:.72;cursor:progress}.hidden{display:none}pre{white-space:pre-wrap;word-break:break-word;color:#fecaca}.footer{margin-top:14px;text-align:center;color:#64748b;font-size:11px}</style><style>
+.cron-job{border-top:1px solid #ffffff12;padding-top:10px;margin-top:10px}.cron-job:first-of-type{border-top:0;margin-top:0;padding-top:0}.cron-editor{margin-top:6px;border:1px solid #ffffff16;border-radius:14px;background:#ffffff06}.cron-editor summary{padding:10px 12px;cursor:pointer;font-size:13px;font-weight:700;color:#7dd3fc}.cron-fields{display:grid;gap:12px;padding:0 12px 12px}.cron-field{display:grid;gap:6px;font-size:13px}.cron-field select{width:100%;min-height:40px;border-radius:10px;border:1px solid #ffffff22;background:#111c2d;color:#eef6ff;padding:8px}.cron-range{width:100%;accent-color:#22d3ee;touch-action:pan-y}.cron-range:disabled{opacity:.42}.cron-value{color:#a5f3fc;font-weight:750}.cron-hint{font-size:11px;color:#94a3b8;line-height:1.4}.cron-save{justify-self:start;border:0;border-radius:10px;background:#0e7490;color:#ecfeff;font-weight:750;padding:10px 14px}.cron-save:disabled{opacity:.55}.cron-message{font-size:12px;color:#86efac;min-height:16px}.cron-message.error{color:#fca5a5}
+</style></head>
 <body><main class="wrap"><div class="top"><div><div id="verified" class="eyebrow">Проверяю Telegram…</div><h1 class="title">Hermes Operator</h1><div class="muted small">Сервисы, подписки, cron</div></div><button id="refresh" type="button">Обновить</button></div><div id="error" class="card hidden"><b>Ошибка доступа</b><pre id="errtext"></pre></div><div id="content"><div class="card muted">Загружаю…</div></div><div class="footer">Данные без токенов и секретов</div></main>
 <script src="https://telegram.org/js/telegram-web-app.js"></script><script>
 const tg=window.Telegram&&window.Telegram.WebApp; tg&&tg.ready&&tg.ready(); tg&&tg.expand&&tg.expand();
@@ -679,10 +928,68 @@ function percent(v){const n=Number(v);return Number.isFinite(n)?`${Math.round(n)
 function resetBank(a){if(a.reset_bank_text)return `<span class="caption">${esc(a.reset_bank_text)}</span>`; if(a.reset_bank!==undefined&&a.reset_bank!==null&&a.reset_bank!==''){const bank=Number(a.reset_bank);const label=Number.isFinite(bank)&&bank===0?'нет':esc(a.reset_bank);return `<span class="caption">reset bank: ${label}</span>`} return ''}
 function accountCard(a){const windows=(a.windows||[]).map(w=>{const used=Math.max(0,Math.min(100,Number(w.used_percent)||0));const usedText=percent(w.used_percent);const remainingText=percent(w.remaining_percent);const label=esc(w.label||w.key||'лимит');return `<div class="barline"><div class="limit-head"><span class="limit-title">${label}</span><span class="limit-stats"><strong>${remainingText}</strong> осталось · ${usedText} использовано</span></div><div class="bar" aria-label="${label}: использовано ${usedText}, осталось ${remainingText}"><div class="fill" style="width:${used}%"></div></div>${w.reset_text?`<div class="caption limit-note">${esc(w.reset_text)}</div>`:''}</div>`}).join('');return `<div class="account"><div class="account-head"><div><div class="name">${esc(a.label)}</div><div class="account-meta">${a.plan?`<span class="caption">plan ${esc(a.plan)}</span>`:(a.message?`<span class="caption">${esc(a.message)}</span>`:'')}${resetBank(a)}<span class="status-badge ${tone(a.status)}">${esc(statusText(a.status))}</span></div></div></div>${windows?`<div class="bars">${windows}</div>`:''}</div>`}
 function subscriptionCard(s){return `<section class="card"><h2>${esc(s.label||s.id)}</h2><div class="caption">${esc(s.provider||'subscription')} · доступно: ${esc(s.available_accounts??0)} · требует внимания: ${esc(s.attention_accounts??0)}</div>${s.error?`<pre>${esc(s.error)}</pre>`:''}${(s.accounts||[]).map(accountCard).join('')||'<div class="muted">Нет данных.</div>'}</section>`}
-function cronRow(j){return `<div class="row"><div><div class="name">${esc(j.name||j.id)}</div><div class="caption">${esc(j.schedule_display||j.schedule||'без расписания')}</div>${j.next_run_display?`<div class="caption">следующий запуск: ${esc(j.next_run_display)}</div>`:''}${j.script?`<div class="caption">script: ${esc(j.script)}</div>`:''}</div><span class="pill ${tone(j.state)}">${esc(j.state||'active')}</span></div>`}
-function render(data){$('verified').textContent='Telegram verified · '+esc(data.checked_at_display||data.checked_at); const subscriptions=data.subscriptions||[]; const cron=data.cron_jobs||[]; $('content').innerHTML=`<section class="card"><h2>Подключённые сервисы</h2>${(data.services||[]).map(serviceRow).join('')||'<div class="muted">Сервисы не настроены.</div>'}</section>${subscriptions.length?subscriptions.map(subscriptionCard).join(''):'<section class="card"><h2>Подписки</h2><div class="muted">Трекеры подписок не настроены.</div></section>'}<section class="card"><h2>Активные cron-задачи</h2>${cron.length?cron.map(cronRow).join(''):'<div class="muted">Активных задач нет.</div>'}</section>`;}
+const CRON_REASONING_VALUES=['','none','minimal','low','medium','high','xhigh','max','ultra'];
+const CRON_REASONING_LABELS=['По умолчанию','none','minimal','low','medium','high','xhigh','max','ultra'];
+const CRON_PERIOD_MINUTES=[1,2,5,10,15,30,60,120,360,720,1440,2880,4320,7200,10080,20160,43200];
+function cronPeriodLabel(index){const n=CRON_PERIOD_MINUTES[Math.max(0,Math.min(CRON_PERIOD_MINUTES.length-1,Number(index)||0))];if(n<60)return `${n} мин`;if(n<1440)return `${n/60} ч`;return `${n/1440} дн`}
+function cronRow(j,models,canEdit){
+ const selected=j.model_choice||'default';
+ const modelOptions=(models||[]).map(m=>`<option value="${esc(m.value)}" ${m.value===selected?'selected':''}>${esc(m.label)}</option>`).join('');
+ const editable=canEdit&&['active','paused','scheduled'].includes(j.state);
+ const summary=`<div class="row"><div><div class="name">${esc(j.name||j.id)}</div><div class="caption">${esc(j.schedule_display||j.schedule||'без расписания')}</div>${j.next_run_display?`<div class="caption">следующий запуск: ${esc(j.next_run_display)}</div>`:''}${j.script?`<div class="caption">script: ${esc(j.script)}</div>`:''}</div><span class="pill ${tone(j.state)}">${esc(j.state||'active')}</span></div>`;
+ if(!editable)return `<div class="cron-job">${summary}</div>`;
+ const periodIndex=Number.isInteger(j.periodicity_index)?j.periodicity_index:10;
+ const reasoningIndex=Number.isInteger(j.reasoning_index)?j.reasoning_index:0;
+ const once=j.schedule_kind==='once';
+ const warning=j.schedule_kind==='cron'?'Изменение заменит календарное расписание фиксированным интервалом; время суток и календарная привязка изменятся.':'';
+ return `<div class="cron-job">${summary}<details class="cron-editor" data-cron-editor data-job-id="${esc(j.id)}"><summary>Настроить модель, рассуждение и периодичность</summary><div class="cron-fields"><label class="cron-field">Модель<select data-model>${modelOptions}</select></label><label class="cron-field"><span>Рассуждение: <strong class="cron-value" data-reasoning-value>${CRON_REASONING_LABELS[reasoningIndex]}</strong></span><input class="cron-range" type="range" min="0" max="8" step="1" value="${reasoningIndex}" data-reasoning aria-label="Уровень рассуждения"><span class="cron-hint">По умолчанию → none → minimal → low → medium → high → xhigh → max → ultra</span></label><label class="cron-field"><span>Периодичность: <strong class="cron-value" data-periodicity-value>${once?'не применяется':(j.schedule_minutes?cronPeriodLabel(periodIndex):'не меняется')}</strong></span><input class="cron-range" type="range" min="0" max="16" step="1" value="${periodIndex}" data-periodicity data-period-initial="${j.periodicity_index??''}" ${once?'disabled':''} aria-label="Периодичность cron-задачи"><span class="cron-hint">От 1 минуты до 30 дней. Текущий график: ${esc(j.schedule_display||j.schedule||'не определён')}. ${warning}</span></label><div class="cron-message" data-cron-message aria-live="polite"></div><button class="cron-save" type="button" data-cron-save>Сохранить</button></div></details></div>`;
+}
+function saveCronEditor(button){
+ const identity=(tg&&tg.initData)||'';
+ const isCurrent=()=>identity===((tg&&tg.initData)||'')&&identity===statusLoadIdentity;
+ const editor=button.closest('[data-cron-editor]');const message=editor.querySelector('[data-cron-message]');
+ const job=(window.__cronJobs||[]).find(item=>item.id===editor.dataset.jobId);
+ if(!job||!isCurrent()){message.classList.add('error');message.textContent='Задача устарела. Обновите страницу.';return}
+ const period=editor.querySelector('[data-periodicity]');const reasoning=editor.querySelector('[data-reasoning]');
+ const dirty=period&&!period.disabled&&period.dataset.dirty==='1';const initial=period&&period.dataset.periodInitial!==''?Number(period.dataset.periodInitial):null;const nextIndex=dirty?Number(period.value):null;
+ if(dirty&&(initial===null||nextIndex!==initial)&&job.schedule_kind==='cron'&&!window.confirm('Заменить календарное расписание фиксированным интервалом?'))return;
+ button.disabled=true;button.textContent='Сохраняю…';message.classList.remove('error');message.textContent='';
+ fetch('/api/status',{method:'POST',cache:'no-store',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({action:'cron_update',init_data:identity,job_id:job.id,model_choice:editor.querySelector('[data-model]').value,reasoning_effort:CRON_REASONING_VALUES[Number(reasoning.value)],periodicity_index:nextIndex})})
+ .then(async r=>{
+  const data=await r.json();if(!isCurrent())return;
+  if(!r.ok)throw new Error((data.detail&&data.detail.message)||'Не удалось сохранить задачу');
+  const refreshed=await load(true);if(!refreshed||!isCurrent())return;
+  const updated=[...document.querySelectorAll('[data-cron-editor]')].find(item=>item.dataset.jobId===job.id);
+  if(updated){updated.open=true;updated.querySelector('[data-cron-message]').textContent=data.message||'Параметры задачи сохранены'}
+ }).catch(error=>{if(isCurrent()){message.classList.add('error');message.textContent=String(error.message||error)}})
+ .finally(()=>{if(button.isConnected&&isCurrent()){button.disabled=false;button.textContent='Сохранить'}})
+}
+document.addEventListener('input',event=>{if(event.target.matches('[data-reasoning]'))event.target.closest('.cron-field').querySelector('[data-reasoning-value]').textContent=CRON_REASONING_LABELS[Number(event.target.value)];if(event.target.matches('[data-periodicity]')){event.target.dataset.dirty='1';event.target.closest('.cron-field').querySelector('[data-periodicity-value]').textContent=cronPeriodLabel(event.target.value)}});
+document.addEventListener('click',event=>{const button=event.target.closest('[data-cron-save]');if(button)saveCronEditor(button)});
+function render(data){$('verified').textContent='Telegram verified · '+esc(data.checked_at_display||data.checked_at); const subscriptions=data.subscriptions||[]; const cron=data.cron_jobs||[];window.__cronJobs=cron; $('content').innerHTML=`<section class="card"><h2>Подключённые сервисы</h2>${(data.services||[]).map(serviceRow).join('')||'<div class="muted">Сервисы не настроены.</div>'}</section>${subscriptions.length?subscriptions.map(subscriptionCard).join(''):'<section class="card"><h2>Подписки</h2><div class="muted">Трекеры подписок не настроены.</div></section>'}<section class="card"><h2>Cron-задачи</h2>${cron.length?cron.map(j=>cronRow(j,data.cron_models||[],data.cron_can_edit===true)).join(''):'<div class="muted">Активных задач нет.</div>'}</section>`;}
 function setRefreshState(active){const b=$('refresh'); if(!b)return; b.disabled=!!active; b.textContent=active?'Обновляю…':'Обновить'; b.setAttribute('aria-busy',active?'true':'false')}
-async function load(refresh=false){$('error').classList.add('hidden'); if(refresh){$('verified').textContent='Обновляю данные…'} setRefreshState(refresh); try{if(!tg||!tg.initData){$('verified').textContent='Mini App unavailable';$('content').innerHTML='<div class="card"><b>Открой через кнопку Mini App в Telegram-боте.</b></div>';return} const r=await fetch('/api/status?refresh='+Date.now(),{method:'POST',cache:'no-store',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({init_data:tg.initData,refresh:!!refresh,requested_at:Date.now()})}); const data=await r.json(); if(!r.ok) throw new Error((data.detail&&data.detail.message)||JSON.stringify(data)); render(data)}catch(e){$('verified').textContent='Не авторизовано';$('error').classList.remove('hidden');$('errtext').textContent=String(e)}finally{setRefreshState(false)}}
+let statusLoadSequence=0;let statusLoadIdentity=null;
+async function load(refresh=false){
+ const sequence=++statusLoadSequence;
+ const identity=(tg&&tg.initData)||'';
+ const isCurrent=()=>sequence===statusLoadSequence&&((tg&&tg.initData)||'')===identity;
+ const clearPrivate=()=>{window.__cronJobs=[];$('content').innerHTML='';if($('connected-content'))$('connected-content').innerHTML=''};
+ if(identity!==statusLoadIdentity){clearPrivate();statusLoadIdentity=identity}
+ $('error').classList.add('hidden');
+ if(refresh)$('verified').textContent='Обновляю данные…';
+ setRefreshState(refresh);
+ try{
+  if(!identity){clearPrivate();$('verified').textContent='Mini App unavailable';$('content').innerHTML='<div class="card"><b>Открой через кнопку Mini App в Telegram-боте.</b></div>';return false}
+  const r=await fetch('/api/status?refresh='+Date.now(),{method:'POST',cache:'no-store',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({init_data:identity,refresh:!!refresh,requested_at:Date.now()})});
+  const data=await r.json();
+  if(!isCurrent())return false;
+  if(!r.ok)throw new Error((data.detail&&data.detail.message)||JSON.stringify(data));
+  render(data);return true;
+ }catch(e){
+  if(!isCurrent())return false;
+  clearPrivate();$('verified').textContent='Не авторизовано';$('error').classList.remove('hidden');$('errtext').textContent=String(e);return false;
+ }finally{if(isCurrent())setRefreshState(false)}
+}
 $('refresh').addEventListener('click',(event)=>{event.preventDefault(); load(true)}); load(false);
 </script></body></html>"""
 
@@ -730,19 +1037,37 @@ def make_handler(context: ServerContext) -> type[BaseHTTPRequestHandler]:
                 return
             try:
                 length = int(self.headers.get("content-length", "0"))
+                if length <= 0 or length > 16384:
+                    self._send_json({"detail": {"message": "Invalid request size"}}, 413)
+                    return
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
+                if not isinstance(body, dict):
+                    self._send_json({"detail": {"message": "Request body must be an object"}}, 400)
+                    return
+                action = str(body.get("action") or "status")
+                if action not in {"status", "cron_update"}:
+                    self._send_json({"detail": {"message": "Unknown action"}}, 400)
+                    return
                 telegram = context.config.get("telegram", {})
-                token_env = telegram.get("bot_token_env", "TELEGRAM_BOT_TOKEN")
-                bot_token = os.environ.get(str(token_env), "")
-                if not bot_token:
-                    raise PermissionError(f"bot token env var is not configured: {token_env}")
-                allowed = [int(v) for v in telegram.get("allowed_users", [])]
-                user = validate_init_data(str(body.get("init_data", "")), bot_token=bot_token, allowed_users=allowed, max_age_seconds=int(telegram.get("max_age_seconds", 86400)))
+                cron_config = context.config.get("cron", {}) or {}
+                action_allowed_users = cron_config.get("edit_allowed_users") if action == "cron_update" else None
+                user = authenticate_telegram_request(str(body.get("init_data", "")), telegram, allowed_users=action_allowed_users, require_allowlist=action == "cron_update")
+                if action == "cron_update":
+                    result = edit_cron_job(context.config, body)
+                    result["user"] = user
+                    self._send_json(result)
+                    return
                 payload = collect_status(context.config)
                 payload["user"] = user
+                editors = cron_config.get("edit_allowed_users")
+                if editors is None:
+                    editors = telegram.get("allowed_users", [])
+                payload["cron_can_edit"] = int(user["id"]) in [int(value) for value in editors]
                 self._send_json(payload)
             except PermissionError as exc:
                 self._send_json({"detail": {"message": str(exc)}}, 403)
+            except ValueError as exc:
+                self._send_json({"detail": {"message": str(redact(exc))}}, 400)
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"detail": {"message": str(redact(exc))}}, 500)
 
@@ -776,6 +1101,8 @@ def init_config(path: pathlib.Path) -> None:
     bot_token_env = ask("Telegram bot token environment variable", "TELEGRAM_BOT_TOKEN")
     allowed_raw = ask("Allowed Telegram user IDs, comma-separated", "")
     allowed = [int(part.strip()) for part in allowed_raw.split(",") if part.strip().isdigit()]
+    cron_edit_raw = ask("Cron editor Telegram user IDs (blank = disable editing)", "")
+    cron_edit_allowed = [int(part.strip()) for part in cron_edit_raw.split(",") if part.strip().isdigit()]
 
     services = []
     if ask("Track GitHub via gh auth status? yes/no", "yes").lower().startswith("y"):
@@ -862,7 +1189,7 @@ def init_config(path: pathlib.Path) -> None:
         "telegram": {"bot_token_env": bot_token_env, "allowed_users": allowed, "max_age_seconds": 86400},
         "services": services,
         "subscription_trackers": trackers,
-        "cron": {"enabled": True, "command": "hermes cron list --all", "timeout_seconds": 60},
+        "cron": {"enabled": True, "command": "hermes cron list --all", "timeout_seconds": 60, "edit_allowed_users": cron_edit_allowed},
     }
     write_config(config, path)
     print(f"Wrote {path}")

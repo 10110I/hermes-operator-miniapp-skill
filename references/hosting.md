@@ -3,9 +3,9 @@
 The Mini App has two parts:
 
 1. **Public HTML entrypoint** at `/miniapp`.
-2. **Private status API** at `/api/status`, protected by Telegram WebApp `initData` validation and an allowlisted Telegram user ID.
+2. **Private API** at `/api/status`, protected by Telegram WebApp `initData` validation and a Telegram user allowlist. It reads local Hermes state and accepts only a constrained cron-edit action (model, reasoning, interval); cron editing uses `cron.edit_allowed_users`, inheriting `telegram.allowed_users` only when the key is absent; an explicit empty list disables edits.
 
-Because the status API reads local Hermes state, cron jobs, credential-health probes, and provider-specific quota collectors, the recommended default is **self-hosting on the same machine that runs Hermes**.
+Because the API reads local Hermes state and can apply constrained cron updates, the recommended default is **self-hosting on the same machine that runs Hermes**.
 
 ## Recommended topology
 

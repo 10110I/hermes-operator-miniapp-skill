@@ -3,11 +3,14 @@
 Creation date: 2026-09-20
 Status: working initial public release
 
-This repository packages a Hermes skill plus helper scripts for a read-only Telegram Mini App that shows:
+This repository packages a Hermes skill plus helper scripts for an access-controlled Telegram Mini App that shows:
 
 - connected service/access checks;
 - provider-neutral subscription/quota trackers;
-- active Hermes cron jobs with human-readable schedules and local timezone display.
+- active Hermes cron jobs with human-readable schedules and local timezone display;
+- narrow cron-task editing: model selection, reasoning slider, and interval slider for repeating jobs.
+
+Cron writes are authenticated separately with `cron.edit_allowed_users` (inheriting `telegram.allowed_users` only when the key is absent; an explicit empty list disables edits); the endpoint only exposes model/reasoning/schedule edits and does not expose arbitrary commands.
 
 It is based on a real Hermes operator panel, but the subscription tracking was redesigned so users are not locked to one provider such as `openai-codex`.
 
@@ -126,6 +129,17 @@ pytest -q
 python3 -m py_compile scripts/operator_miniapp_status.py
 python3 scripts/operator_miniapp_status.py --config tests/fixtures/sample-config.yaml collect --pretty
 ```
+
+Optional real-browser/CLI regression (requires an installed Hermes CLI):
+
+```bash
+uv run --with playwright playwright install chromium --only-shell
+uv run --with playwright --with PyYAML python tests/browser_cron_editor.py scripts/operator_miniapp_status.py
+```
+
+This creates a disposable `HERMES_HOME`, never edits the operator's real jobs, and never runs inference. It checks mobile/desktop layout, actual CLI saves and reload, clearing model/reasoning pins, calendar-conversion cancellation, one-shot frequency protection, save failures, and viewer/account-switch denial.
+
+The reasoning slider stores Hermes-supported levels; the inference provider may clamp unsupported levels at execution time. Selecting a catalog model does not prove the account has quota for inference.
 
 ## Repository layout
 
