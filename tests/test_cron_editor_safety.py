@@ -30,6 +30,7 @@ def signed(user_id):
     return urlencode(fields)
 
 
+@pytest.mark.parametrize("action", ["cron_update", "cron_delete"])
 @pytest.mark.parametrize("editor_config,user_id,expected", [
     ({}, 101, 200),
     ({}, 202, 403),
@@ -38,17 +39,18 @@ def signed(user_id):
     ({"edit_allowed_users": [202]}, 101, 403),
     ({"edit_allowed_users": [202]}, 202, 200),
 ])
-def test_editor_allowlist_policy(monkeypatch, editor_config, user_id, expected):
+def test_editor_allowlist_policy(monkeypatch, editor_config, user_id, expected, action):
     monkeypatch.setenv("EDITOR_TEST_TOKEN", TOKEN)
     config = {"telegram": {"bot_token_env": "EDITOR_TEST_TOKEN", "allowed_users": [101]}, "cron": editor_config}
     calls = []
     monkeypatch.setattr(app, "edit_cron_job", lambda *args: calls.append(args) or {"ok": True})
+    monkeypatch.setattr(app, "delete_cron_job", lambda *args: calls.append(args) or {"ok": True})
     server = ThreadingHTTPServer(("127.0.0.1", 0), app.make_handler(app.ServerContext(config)))
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
         conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
-        conn.request("POST", "/api/status", json.dumps({"action": "cron_update", "init_data": signed(user_id)}), {"Content-Type": "application/json"})
+        conn.request("POST", "/api/status", json.dumps({"action": action, "init_data": signed(user_id)}), {"Content-Type": "application/json"})
         response = conn.getresponse()
         response.read()
         assert response.status == expected

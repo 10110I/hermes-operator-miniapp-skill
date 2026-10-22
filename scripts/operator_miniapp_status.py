@@ -752,16 +752,31 @@ def _model_parts(model: Any, provider: Any = None) -> tuple[str, str]:
     return provider_text, model_text
 
 
-def cron_job_records() -> list[dict[str, Any]]:
+def cron_job_records(*, strict: bool = False) -> list[dict[str, Any]]:
     """Read cron metadata from Hermes storage; never return prompts or raw records."""
     try:
+        if strict:
+            from cron.jobs import _current_cron_store
+
+            raw = json.loads(_current_cron_store().jobs_file.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict) or not isinstance(raw.get("jobs"), list):
+                raise ValueError("Invalid raw cron store schema")
+            records = raw["jobs"]
+            identifiers = [record.get("id") if isinstance(record, dict) else None for record in records]
+            if any(not isinstance(identifier, str) or not identifier for identifier in identifiers):
+                raise ValueError("Invalid cron record ID")
+            if len(set(identifiers)) != len(identifiers):
+                raise ValueError("Duplicate cron record ID")
+            return records
         from cron.jobs import load_jobs
 
         records = load_jobs()
         if isinstance(records, dict):
             records = records.get("jobs", [])
         return [record for record in records if isinstance(record, dict)] if isinstance(records, list) else []
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise ValueError("Не удалось прочитать хранилище задач.") from exc
         return []
 
 
@@ -892,6 +907,67 @@ def edit_cron_job(config: dict[str, Any], payload: dict[str, Any]) -> dict[str, 
     return {"ok": True, "job_id": job_id, "schedule": new_schedule, "message": "Параметры задачи сохранены"}
 
 
+def remove_cron_job_by_id(job_id: str) -> bool:
+    """Exact-ID transaction using Hermes' atomic writer and shared store lock.
+
+    Do not call the CLI/name resolver. Both process locks must be acquired: the
+    runtime's general-purpose lock can degrade to local-only on flock failure.
+    Retain output/notepad history; only the scheduling record is removed.
+    """
+    from cron.jobs import (
+        _acquire_flock, _jobs_file_lock, _jobs_lock_file,
+        _release_flock, _save_jobs_unlocked,
+    )
+
+    if not _jobs_file_lock.acquire(timeout=15):
+        raise ValueError("Хранилище задач занято. Обновите список перед повторной попыткой.")
+    try:
+        with open(_jobs_lock_file(), "a+", encoding="utf-8") as lock_file:
+            if _acquire_flock(lock_file, 15) is not True:
+                raise ValueError("Не удалось безопасно заблокировать хранилище задач.")
+            try:
+                records = cron_job_records(strict=True)
+                if not any(record["id"] == job_id for record in records):
+                    return False
+                remaining = [record for record in records if record["id"] != job_id]
+                _save_jobs_unlocked(remaining, removed_ids={job_id})
+                return True
+            finally:
+                _release_flock(lock_file)
+    finally:
+        _jobs_file_lock.release()
+
+
+def delete_cron_job(config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove one explicitly confirmed job and verify persisted absence.
+
+    Authorization and serialization are enforced by the HTTP handler. Repeated
+    requests for an already absent ID are a verified no-op, never a name lookup.
+    """
+    if not (config.get("cron", {}) or {}).get("enabled", True):
+        raise ValueError("Cron отключён.")
+    if set(payload) - {"action", "init_data", "job_id", "confirmed"}:
+        raise ValueError("Недопустимые параметры удаления.")
+    job_id = payload.get("job_id")
+    if not isinstance(job_id, str) or not re.fullmatch(r"[a-f0-9]{12}", job_id):
+        raise ValueError("Неверный идентификатор задачи.")
+    if payload.get("confirmed") is not True:
+        raise ValueError("Подтвердите удаление задачи.")
+    try:
+        removed = remove_cron_job_by_id(job_id)
+    except (OSError, TimeoutError, ImportError, AttributeError) as exc:
+        raise ValueError("Результат удаления пока неизвестен. Обновите список задач перед повторной попыткой.") from exc
+    try:
+        remaining = cron_job_records(strict=True)
+    except ValueError as exc:
+        raise ValueError("Не удалось проверить удаление. Обновите список задач перед повторной попыткой.") from exc
+    if any(record["id"] == job_id for record in remaining):
+        raise ValueError("Удаление не подтверждено: задача всё ещё в хранилище.")
+    if not removed:
+        return {"ok": True, "job_id": job_id, "already_removed": True, "message": "Задача уже удалена."}
+    return {"ok": True, "job_id": job_id, "message": "Задача удалена."}
+
+
 def collect_status(config: dict[str, Any]) -> dict[str, Any]:
     zone = tz(config)
     checked_at = now_iso()
@@ -916,8 +992,15 @@ MINIAPP_HTML = """<!doctype html>
 <title>Hermes Operator Status</title><style>
 :root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#08111f;color:#eef6ff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#155e7566,#08111f 46%,#020617)}.wrap{max-width:640px;margin:0 auto;padding:18px 14px 42px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.eyebrow{font-size:12px;color:#93c5fd}.title{margin:2px 0 0;font-size:28px;letter-spacing:-.04em}.muted{color:#94a3b8}.small{font-size:12px}.card{border:1px solid #ffffff18;border-radius:24px;background:#0b1220d9;padding:15px;margin-top:12px;box-shadow:0 12px 34px #0005}.card h2{font-size:17px;margin:0 0 12px}.row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #ffffff10}.row:first-of-type{border-top:0}.name{font-weight:750}.caption{font-size:12px;color:#94a3b8;margin-top:3px}.pill{font-size:11px;text-transform:uppercase;border-radius:999px;border:1px solid #ffffff24;padding:5px 8px;background:#ffffff10;white-space:nowrap}.ok{color:#86efac}.error,.reauth{color:#fca5a5}.limited,.unknown{color:#fde68a}.missing{color:#cbd5e1}.account{display:block;padding:13px 0;border-top:1px solid #ffffff10}.account:first-of-type{border-top:0}.account-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.account-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px}.account-meta .caption{margin-top:0}.status-badge{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-radius:999px;border:1px solid #ffffff24;padding:3px 7px;background:#ffffff0d;white-space:nowrap}.bars{display:grid;gap:8px;margin-top:10px}.barline{display:grid;gap:6px;padding:9px;border-radius:14px;background:#ffffff08;border:1px solid #ffffff0d}.limit-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}.limit-title{font-size:12px;font-weight:800;color:#e2e8f0}.limit-stats{font-size:12px;color:#94a3b8}.limit-stats strong{color:#e2e8f0}.limit-note{margin-top:0}.bar{height:9px;background:#ffffff14;border-radius:999px;overflow:hidden}.fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#eab308,#ef4444)}button{border:0;border-radius:999px;padding:10px 14px;background:#38bdf8;color:#04111f;font-weight:800}button:disabled{opacity:.72;cursor:progress}.hidden{display:none}pre{white-space:pre-wrap;word-break:break-word;color:#fecaca}.footer{margin-top:14px;text-align:center;color:#64748b;font-size:11px}</style><style>
 .cron-job{border-top:1px solid #ffffff12;padding-top:10px;margin-top:10px}.cron-job:first-of-type{border-top:0;margin-top:0;padding-top:0}.cron-editor{margin-top:6px;border:1px solid #ffffff16;border-radius:14px;background:#ffffff06}.cron-editor summary{padding:10px 12px;cursor:pointer;font-size:13px;font-weight:700;color:#7dd3fc}.cron-fields{display:grid;gap:12px;padding:0 12px 12px}.cron-field{display:grid;gap:6px;font-size:13px}.cron-field select{width:100%;min-height:40px;border-radius:10px;border:1px solid #ffffff22;background:#111c2d;color:#eef6ff;padding:8px}.cron-range{width:100%;accent-color:#22d3ee;touch-action:pan-y}.cron-range:disabled{opacity:.42}.cron-value{color:#a5f3fc;font-weight:750}.cron-hint{font-size:11px;color:#94a3b8;line-height:1.4}.cron-save{justify-self:start;border:0;border-radius:10px;background:#0e7490;color:#ecfeff;font-weight:750;padding:10px 14px}.cron-save:disabled{opacity:.55}.cron-message{font-size:12px;color:#86efac;min-height:16px}.cron-message.error{color:#fca5a5}
+.cron-delete{background:#541c27;color:#fecdd3;border:1px solid #f8717166;min-height:44px}.cron-delete:hover{background:#702030}.cron-delete-action{margin-top:10px}.cron-delete-dialog{color:#eef6ff;background:#102137;border:1px solid #ffffff24;border-radius:18px;padding:22px;width:calc(100% - 32px);max-width:420px;max-height:calc(100dvh - 32px);overflow:auto;box-shadow:0 20px 80px #0009}.cron-delete-dialog::backdrop{background:#020617bd;backdrop-filter:blur(3px)}.cron-delete-dialog h2{margin:0 0 14px;font-size:21px;line-height:1.3}.cron-delete-dialog p{overflow-wrap:anywhere;line-height:1.5}.cron-delete-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}.cron-delete-actions button{flex:1;min-height:44px}.cron-delete-dialog button:disabled{opacity:.55;cursor:wait}
 </style></head>
-<body><main class="wrap"><div class="top"><div><div id="verified" class="eyebrow">Проверяю Telegram…</div><h1 class="title">Hermes Operator</h1><div class="muted small">Сервисы, подписки, cron</div></div><button id="refresh" type="button">Обновить</button></div><div id="error" class="card hidden"><b>Ошибка доступа</b><pre id="errtext"></pre></div><div id="content"><div class="card muted">Загружаю…</div></div><div class="footer">Данные без токенов и секретов</div></main>
+<body><main class="wrap"><div class="top"><div><div id="verified" class="eyebrow">Проверяю Telegram…</div><h1 class="title">Hermes Operator</h1><div class="muted small">Сервисы, подписки, cron</div></div><button id="refresh" type="button">Обновить</button></div><p id="cron-feedback" class="muted small" role="status" hidden></p><div id="error" class="card hidden"><b>Ошибка доступа</b><pre id="errtext"></pre></div><div id="content"><div class="card muted">Загружаю…</div></div><div class="footer">Данные без токенов и секретов</div></main>
+<dialog id="cron-delete-dialog" class="cron-delete-dialog" aria-labelledby="cron-delete-title" aria-describedby="cron-delete-name">
+<h2 id="cron-delete-title">Вы уверены что хотите удалить</h2>
+<p id="cron-delete-name"></p><p class="muted small">Будущие запуски этой задачи будут отменены. Восстановить её из интерфейса нельзя.</p>
+<div id="cron-delete-error" class="cron-message error" role="alert"></div>
+<div class="cron-delete-actions"><button id="cron-delete-cancel" type="button" autofocus>Отмена</button><button id="cron-delete-confirm" class="cron-delete" type="button">Удалить</button></div>
+</dialog>
 <script src="https://telegram.org/js/telegram-web-app.js"></script><script>
 const tg=window.Telegram&&window.Telegram.WebApp; tg&&tg.ready&&tg.ready(); tg&&tg.expand&&tg.expand();
 const $=(id)=>document.getElementById(id); const esc=(v)=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
@@ -936,14 +1019,50 @@ function cronRow(j,models,canEdit){
  const selected=j.model_choice||'default';
  const modelOptions=(models||[]).map(m=>`<option value="${esc(m.value)}" ${m.value===selected?'selected':''}>${esc(m.label)}</option>`).join('');
  const editable=canEdit&&['active','paused','scheduled'].includes(j.state);
+ const deleteAction=canEdit?`<div class="cron-delete-action"><button class="cron-delete" type="button" data-cron-delete data-job-id="${esc(j.id)}">Удалить задачу</button></div>`:'';
  const summary=`<div class="row"><div><div class="name">${esc(j.name||j.id)}</div><div class="caption">${esc(j.schedule_display||j.schedule||'без расписания')}</div>${j.next_run_display?`<div class="caption">следующий запуск: ${esc(j.next_run_display)}</div>`:''}${j.script?`<div class="caption">script: ${esc(j.script)}</div>`:''}</div><span class="pill ${tone(j.state)}">${esc(j.state||'active')}</span></div>`;
- if(!editable)return `<div class="cron-job">${summary}</div>`;
+ if(!editable)return `<div class="cron-job">${summary}${deleteAction}</div>`;
  const periodIndex=Number.isInteger(j.periodicity_index)?j.periodicity_index:10;
  const reasoningIndex=Number.isInteger(j.reasoning_index)?j.reasoning_index:0;
  const once=j.schedule_kind==='once';
  const warning=j.schedule_kind==='cron'?'Изменение заменит календарное расписание фиксированным интервалом; время суток и календарная привязка изменятся.':'';
- return `<div class="cron-job">${summary}<details class="cron-editor" data-cron-editor data-job-id="${esc(j.id)}"><summary>Настроить модель, рассуждение и периодичность</summary><div class="cron-fields"><label class="cron-field">Модель<select data-model>${modelOptions}</select></label><label class="cron-field"><span>Рассуждение: <strong class="cron-value" data-reasoning-value>${CRON_REASONING_LABELS[reasoningIndex]}</strong></span><input class="cron-range" type="range" min="0" max="8" step="1" value="${reasoningIndex}" data-reasoning aria-label="Уровень рассуждения"><span class="cron-hint">По умолчанию → none → minimal → low → medium → high → xhigh → max → ultra</span></label><label class="cron-field"><span>Периодичность: <strong class="cron-value" data-periodicity-value>${once?'не применяется':(j.schedule_minutes?cronPeriodLabel(periodIndex):'не меняется')}</strong></span><input class="cron-range" type="range" min="0" max="16" step="1" value="${periodIndex}" data-periodicity data-period-initial="${j.periodicity_index??''}" ${once?'disabled':''} aria-label="Периодичность cron-задачи"><span class="cron-hint">От 1 минуты до 30 дней. Текущий график: ${esc(j.schedule_display||j.schedule||'не определён')}. ${warning}</span></label><div class="cron-message" data-cron-message aria-live="polite"></div><button class="cron-save" type="button" data-cron-save>Сохранить</button></div></details></div>`;
+ return `<div class="cron-job">${summary}<details class="cron-editor" data-cron-editor data-job-id="${esc(j.id)}"><summary>Настроить модель, рассуждение и периодичность</summary><div class="cron-fields"><label class="cron-field">Модель<select data-model>${modelOptions}</select></label><label class="cron-field"><span>Рассуждение: <strong class="cron-value" data-reasoning-value>${CRON_REASONING_LABELS[reasoningIndex]}</strong></span><input class="cron-range" type="range" min="0" max="8" step="1" value="${reasoningIndex}" data-reasoning aria-label="Уровень рассуждения"><span class="cron-hint">По умолчанию → none → minimal → low → medium → high → xhigh → max → ultra</span></label><label class="cron-field"><span>Периодичность: <strong class="cron-value" data-periodicity-value>${once?'не применяется':(j.schedule_minutes?cronPeriodLabel(periodIndex):'не меняется')}</strong></span><input class="cron-range" type="range" min="0" max="16" step="1" value="${periodIndex}" data-periodicity data-period-initial="${j.periodicity_index??''}" ${once?'disabled':''} aria-label="Периодичность cron-задачи"><span class="cron-hint">От 1 минуты до 30 дней. Текущий график: ${esc(j.schedule_display||j.schedule||'не определён')}. ${warning}</span></label><div class="cron-message" data-cron-message aria-live="polite"></div><button class="cron-save" type="button" data-cron-save>Сохранить</button></div></details>${deleteAction}</div>`;
 }
+let cronDeletePending=null;
+function closeCronDelete(){
+ const modal=$('cron-delete-dialog');cronDeletePending=null;
+ if(modal.open)modal.close();
+ $('cron-delete-name').textContent='';$('cron-delete-error').textContent='';
+ $('cron-delete-confirm').disabled=false;$('cron-delete-cancel').disabled=false;$('cron-delete-confirm').textContent='Удалить';
+}
+function openCronDelete(button){
+ if(cronDeletePending&&cronDeletePending.busy)return;
+ const identity=(tg&&tg.initData)||'';
+ const job=(window.__cronJobs||[]).find(item=>item.id===button.dataset.jobId);
+ if(!job||!identity||identity!==statusLoadIdentity){load(true);return}
+ closeCronDelete();cronDeletePending={jobId:job.id,identity,busy:false};
+ $('cron-delete-name').textContent=job.name||job.id;
+ $('cron-delete-dialog').showModal();$('cron-delete-cancel').focus();
+}
+async function confirmCronDelete(){
+ const pending=cronDeletePending;if(!pending||pending.busy)return;
+ const isCurrent=()=>cronDeletePending===pending&&pending.identity===((tg&&tg.initData)||'')&&pending.identity===statusLoadIdentity;
+ if(!isCurrent()){closeCronDelete();load(true);return}
+ pending.busy=true;$('cron-delete-confirm').disabled=true;$('cron-delete-cancel').disabled=true;$('cron-delete-confirm').textContent='Удаляю…';$('cron-delete-error').textContent='';
+ try{
+  const response=await fetch('/api/status',{method:'POST',cache:'no-store',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({action:'cron_delete',init_data:pending.identity,job_id:pending.jobId,confirmed:true})});
+  const data=await response.json();if(!isCurrent())return;
+  if(!response.ok)throw new Error((data.detail&&data.detail.message)||'Не удалось удалить задачу');
+  const refreshed=await load(true);if(!isCurrent()||!refreshed)return;
+  if((window.__cronJobs||[]).some(job=>job.id===pending.jobId))throw new Error('Обновите список: удалённая задача ещё отображается.');
+  closeCronDelete();$('cron-feedback').hidden=false;$('cron-feedback').textContent=data.message||'Задача удалена.';
+ }catch(error){if(isCurrent()&&cronDeletePending===pending)$('cron-delete-error').textContent=String(error.message||error)}
+ finally{if(cronDeletePending===pending){pending.busy=false;$('cron-delete-confirm').disabled=false;$('cron-delete-cancel').disabled=false;$('cron-delete-confirm').textContent='Удалить'}}
+}
+$('cron-delete-cancel').addEventListener('click',closeCronDelete);
+$('cron-delete-confirm').addEventListener('click',confirmCronDelete);
+$('cron-delete-dialog').addEventListener('cancel',event=>{if(cronDeletePending&&cronDeletePending.busy)event.preventDefault()});
+$('cron-delete-dialog').addEventListener('close',()=>{if(!$('cron-delete-dialog').open)closeCronDelete()});
 function saveCronEditor(button){
  const identity=(tg&&tg.initData)||'';
  const isCurrent=()=>identity===((tg&&tg.initData)||'')&&identity===statusLoadIdentity;
@@ -965,7 +1084,7 @@ function saveCronEditor(button){
  .finally(()=>{if(button.isConnected&&isCurrent()){button.disabled=false;button.textContent='Сохранить'}})
 }
 document.addEventListener('input',event=>{if(event.target.matches('[data-reasoning]'))event.target.closest('.cron-field').querySelector('[data-reasoning-value]').textContent=CRON_REASONING_LABELS[Number(event.target.value)];if(event.target.matches('[data-periodicity]')){event.target.dataset.dirty='1';event.target.closest('.cron-field').querySelector('[data-periodicity-value]').textContent=cronPeriodLabel(event.target.value)}});
-document.addEventListener('click',event=>{const button=event.target.closest('[data-cron-save]');if(button)saveCronEditor(button)});
+document.addEventListener('click',event=>{const button=event.target.closest('[data-cron-save]');if(button)saveCronEditor(button);const remove=event.target.closest('[data-cron-delete]');if(remove)openCronDelete(remove)});
 function render(data){$('verified').textContent='Telegram verified · '+esc(data.checked_at_display||data.checked_at); const subscriptions=data.subscriptions||[]; const cron=data.cron_jobs||[];window.__cronJobs=cron; $('content').innerHTML=`<section class="card"><h2>Подключённые сервисы</h2>${(data.services||[]).map(serviceRow).join('')||'<div class="muted">Сервисы не настроены.</div>'}</section>${subscriptions.length?subscriptions.map(subscriptionCard).join(''):'<section class="card"><h2>Подписки</h2><div class="muted">Трекеры подписок не настроены.</div></section>'}<section class="card"><h2>Cron-задачи</h2>${cron.length?cron.map(j=>cronRow(j,data.cron_models||[],data.cron_can_edit===true)).join(''):'<div class="muted">Активных задач нет.</div>'}</section>`;}
 function setRefreshState(active){const b=$('refresh'); if(!b)return; b.disabled=!!active; b.textContent=active?'Обновляю…':'Обновить'; b.setAttribute('aria-busy',active?'true':'false')}
 let statusLoadSequence=0;let statusLoadIdentity=null;
@@ -973,7 +1092,7 @@ async function load(refresh=false){
  const sequence=++statusLoadSequence;
  const identity=(tg&&tg.initData)||'';
  const isCurrent=()=>sequence===statusLoadSequence&&((tg&&tg.initData)||'')===identity;
- const clearPrivate=()=>{window.__cronJobs=[];$('content').innerHTML='';if($('connected-content'))$('connected-content').innerHTML=''};
+ const clearPrivate=()=>{if(typeof closeCronDelete==='function')closeCronDelete();$('cron-feedback').textContent='';$('cron-feedback').hidden=true;window.__cronJobs=[];$('content').innerHTML='';if($('connected-content'))$('connected-content').innerHTML=''};
  if(identity!==statusLoadIdentity){clearPrivate();statusLoadIdentity=identity}
  $('error').classList.add('hidden');
  if(refresh)$('verified').textContent='Обновляю данные…';
@@ -1000,6 +1119,8 @@ class ServerContext:
 
 
 def make_handler(context: ServerContext) -> type[BaseHTTPRequestHandler]:
+    cron_mutation_lock = threading.Lock()
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "HermesOperatorMiniApp/0.1"
 
@@ -1045,15 +1166,17 @@ def make_handler(context: ServerContext) -> type[BaseHTTPRequestHandler]:
                     self._send_json({"detail": {"message": "Request body must be an object"}}, 400)
                     return
                 action = str(body.get("action") or "status")
-                if action not in {"status", "cron_update"}:
+                if action not in {"status", "cron_update", "cron_delete"}:
                     self._send_json({"detail": {"message": "Unknown action"}}, 400)
                     return
                 telegram = context.config.get("telegram", {})
                 cron_config = context.config.get("cron", {}) or {}
-                action_allowed_users = cron_config.get("edit_allowed_users") if action == "cron_update" else None
-                user = authenticate_telegram_request(str(body.get("init_data", "")), telegram, allowed_users=action_allowed_users, require_allowlist=action == "cron_update")
-                if action == "cron_update":
-                    result = edit_cron_job(context.config, body)
+                mutation = action in {"cron_update", "cron_delete"}
+                action_allowed_users = cron_config.get("edit_allowed_users") if mutation else None
+                user = authenticate_telegram_request(str(body.get("init_data", "")), telegram, allowed_users=action_allowed_users, require_allowlist=mutation)
+                if mutation:
+                    with cron_mutation_lock:
+                        result = (delete_cron_job if action == "cron_delete" else edit_cron_job)(context.config, body)
                     result["user"] = user
                     self._send_json(result)
                     return

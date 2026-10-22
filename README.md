@@ -8,9 +8,10 @@ This repository packages a Hermes skill plus helper scripts for an access-contro
 - connected service/access checks;
 - provider-neutral subscription/quota trackers;
 - active Hermes cron jobs with human-readable schedules and local timezone display;
-- narrow cron-task editing: model selection, reasoning slider, and interval slider for repeating jobs.
+- narrow cron-task editing: model selection, reasoning slider, and interval slider for repeating jobs;
+- explicit task deletion via a separate confirmation dialog: «Вы уверены что хотите удалить». Cancel/Escape make no request; confirmed deletion is verified against Hermes storage.
 
-Cron writes are authenticated separately with `cron.edit_allowed_users` (inheriting `telegram.allowed_users` only when the key is absent; an explicit empty list disables edits); the endpoint only exposes model/reasoning/schedule edits and does not expose arbitrary commands.
+Cron writes are authenticated separately with `cron.edit_allowed_users` (inheriting `telegram.allowed_users` only when the key is absent; an explicit empty list disables edits); the endpoint only exposes model/reasoning/schedule edits and exact-ID deletion, never arbitrary commands. Deletion requires a signed editor request with boolean `confirmed: true`; duplicate requests for an absent ID are verified no-ops. Deletion uses an exact-ID transaction under fail-closed local/cross-process locks and the Hermes atomic writer; it never falls back to a name. Output/notepad history is retained. An uncertain write result is not automatically retried, and raw malformed storage cannot count as an empty job list. The picker uses actual Hermes model IDs: an unavailable `gpt-6.1-luna` is never synthesized or silently replaced with `gpt-6-luna`.
 
 It is based on a real Hermes operator panel, but the subscription tracking was redesigned so users are not locked to one provider such as `openai-codex`.
 

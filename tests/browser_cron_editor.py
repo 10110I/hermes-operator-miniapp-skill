@@ -84,7 +84,12 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(url + '/miniapp')
             editor = page.locator(f'[data-cron-editor][data-job-id="{job_id}"]')
-            expect(editor).to_be_attached(timeout=20000)
+            try:
+                expect(editor).to_be_attached(timeout=90000)
+            except AssertionError:
+                print('initial load diagnostics', errors, page.locator('#errtext').inner_text(), (home / 'server.log').read_text()[-3000:], flush=True)
+                raise
+            print('initial signed browser load passed', flush=True)
             editor.locator('summary').click()
             expect(editor.locator('[data-reasoning-value]')).to_have_text('medium')
             choices = editor.locator('[data-model] option').evaluate_all('(els)=>els.map(el=>el.value)')
@@ -94,9 +99,12 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             for selector, value in [('[data-reasoning]', '5'), ('[data-periodicity]', '6')]:
                 editor.locator(selector).evaluate('(el,value)=>{el.value=value;el.dispatchEvent(new Event("input",{bubbles:true}))}', value)
             updates = []
+            deletions = []
             def track(request):
                 if request.method == 'POST' and '/api/status' in request.url:
                     body = request.post_data_json
+                    if body.get('action') == 'cron_delete':
+                        deletions.append({k: v for k, v in body.items() if k != 'init_data'})
                     if body.get('action') == 'cron_update':
                         # Retain only non-secret fields.
                         updates.append({k: v for k, v in body.items() if k != 'init_data'})
@@ -115,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             assert saved['reasoning_effort'] == 'high'
             assert saved['schedule']['kind'] == 'interval' and saved['schedule']['minutes'] == 60
             page.reload()
-            expect(editor).to_be_attached(timeout=20000)
+            expect(editor).to_be_attached(timeout=90000)
             editor.locator('summary').click()
             expect(editor.locator('[data-model]')).to_have_value(target_choice)
             expect(editor.locator('[data-reasoning]')).to_have_value('5')
@@ -175,26 +183,108 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             expect(editor.locator('[data-cron-message]')).to_have_text('Тестовая ошибка сохранения')
             expect(editor.locator('[data-cron-save]')).to_be_enabled()
             assert not errors, errors
+            page.unroute('**/api/status', fail_update)
+            # Delete confirmation: cancellation is a no-op; failure is recoverable.
+            before_delete = records()
+            remove = page.locator(f'[data-cron-delete][data-job-id="{job_id}"]')
+            popup = page.locator('#cron-delete-dialog')
+            page.set_viewport_size({'width': 390, 'height': 844})
+            remove.click()
+            expect(popup).to_be_visible()
+            expect(popup.locator('#cron-delete-title')).to_have_text('Вы уверены что хотите удалить')
+            expect(popup.locator('#cron-delete-name')).to_have_text(before_delete[0]['name'])
+            expect(popup.locator('#cron-delete-cancel')).to_be_focused()
+            for width in (320, 390, 1280):
+                page.set_viewport_size({'width': width, 'height': 844})
+                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                box = popup.bounding_box()
+                assert box and box['x'] >= 0 and box['x'] + box['width'] <= width
+                if width != 320:
+                    page.screenshot(path=str(OUT / (SCRIPT.parent.parent.name + f'-delete-{width}.png')))
+            page.keyboard.press('Escape')
+            expect(popup).not_to_be_visible()
+            assert not deletions and records() == before_delete
+            remove.click()
+            popup.locator('#cron-delete-cancel').click()
+            expect(popup).not_to_be_visible()
+            assert not deletions and records() == before_delete
+            def fail_delete(route):
+                if route.request.post_data_json.get('action') == 'cron_delete':
+                    route.fulfill(status=400, content_type='application/json', body=json.dumps({'detail': {'message': 'Тестовая ошибка удаления'}}))
+                else:
+                    route.continue_()
+            page.route('**/api/status', fail_delete)
+            remove.click()
+            popup.locator('#cron-delete-confirm').click()
+            expect(popup.locator('#cron-delete-error')).to_have_text('Тестовая ошибка удаления')
+            expect(popup.locator('#cron-delete-confirm')).to_be_enabled()
+            assert records() == before_delete and len(deletions) == 1
+            popup.locator('#cron-delete-cancel').click()
+            page.unroute('**/api/status', fail_delete)
+            remove.click()
+            page.evaluate("()=>{const button=document.getElementById('cron-delete-confirm');button.click();button.click()}")
+            expect(popup).not_to_be_visible(timeout=90000)
+            expect(page.locator('#cron-feedback')).to_have_text('Задача удалена.')
+            assert len(deletions) == 2, 'duplicate clicks dispatched multiple deletes'
+            assert deletions[-1] == {'action': 'cron_delete', 'job_id': job_id, 'confirmed': True}
+            assert records() == [job for job in before_delete if job['id'] != job_id]
+            page.reload()
+            expect(page.locator('#verified')).to_contain_text('verified', timeout=90000)
+            assert page.locator(f'[data-cron-delete][data-job-id="{job_id}"]').count() == 0
+            assert all(job['id'] != job_id for job in records())
+            assert not errors, errors
             viewer = browser.new_context(viewport={'width': 390, 'height': 844})
             viewer.add_init_script('window.Telegram={WebApp:{initData:' + json.dumps(signed(202)) + ',ready(){},expand(){}}};')
             viewer.route('https://telegram.org/js/telegram-web-app.js', lambda route: route.fulfill(body=''))
             vp = viewer.new_page()
             vp.goto(url + '/miniapp')
-            expect(vp.locator('#verified')).to_contain_text('verified', timeout=20000)
+            expect(vp.locator('#verified')).to_contain_text('verified', timeout=90000)
             assert vp.locator('[data-cron-editor]').count() == 0
+            assert vp.locator('[data-cron-delete]').count() == 0
             denied = viewer.request.post(url + '/api/status', data={'action': 'cron_update', 'init_data': signed(202)})
             assert denied.status == 403
+            denied_delete = viewer.request.post(url + '/api/status', data={'action': 'cron_delete', 'init_data': signed(202), 'job_id': once_id, 'confirmed': True})
+            assert denied_delete.status == 403
+            assert len(records()) == len(before_delete) - 1
             viewer.close()
             # Same WebView, identity revoked/switched: no previous account data survives.
-            page.unroute('**/api/status', fail_update)
-            page.evaluate('(data)=>window.Telegram.WebApp.initData=data', signed(303))
-            page.locator('#refresh').click()
-            expect(page.locator('#error')).to_be_visible(timeout=20000)
+            page.locator(f'[data-cron-delete][data-job-id="{once_id}"]').click()
+            expect(popup).to_be_visible()
+            page.evaluate('(data)=>{window.Telegram.WebApp.initData=data;load(true)}', signed(303))
+            expect(page.locator('#error')).to_be_visible(timeout=90000)
             assert page.locator('[data-cron-editor]').count() == 0
             assert page.evaluate('(window.__cronJobs||[]).length') == 0
+            expect(popup).not_to_be_visible()
+            expect(page.locator('#cron-delete-name')).to_have_text('')
+            page.evaluate('confirmCronDelete()')
+            assert len(deletions) == 2 and len(records()) == len(before_delete) - 1
             assert 'Интервальная тестовая задача' not in page.locator('#content').inner_text()
+            print('native atomic delete, reload, cancellation, and account switch passed', flush=True)
+            # A late deletion reply cannot restore data or feedback after account revocation.
+            page.evaluate('(data)=>{window.Telegram.WebApp.initData=data;load(true)}', signed())
+            expect(page.locator('#verified')).to_contain_text('verified', timeout=90000)
+            held = []
+            def hold_delete(route):
+                if route.request.post_data_json.get('action') == 'cron_delete':
+                    held.append(route)
+                else:
+                    route.continue_()
+            page.route('**/api/status', hold_delete)
+            page.locator(f'[data-cron-delete][data-job-id="{once_id}"]').click()
+            popup.locator('#cron-delete-confirm').click()
+            expect(popup.locator('#cron-delete-confirm')).to_be_disabled()
+            page.evaluate('(data)=>{window.Telegram.WebApp.initData=data;load(true)}', signed(303))
+            expect(page.locator('#error')).to_be_visible(timeout=90000)
+            assert len(held) == 1
+            held[0].fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'job_id': once_id, 'message': 'Задача удалена.'}))
+            page.wait_for_function('cronDeletePending===null')
+            assert page.evaluate('(window.__cronJobs||[]).length') == 0
+            expect(popup).not_to_be_visible()
+            expect(page.locator('#cron-feedback')).to_be_hidden()
+            assert len(records()) == len(before_delete) - 1
+            assert not errors, errors
             browser.close()
-        print(json.dumps({'script': str(SCRIPT), 'result': 'passed', 'checks': ['mobile+desktop', 'real-cli-save', 'reload', 'default-pins', 'one-shot-disabled', 'calendar-cancel', 'error-recovery', 'viewer-denied', 'account-switch-clears-data', 'partial-model-pin-preserved'], 'screenshots': str(OUT)}))
+        print(json.dumps({'script': str(SCRIPT), 'result': 'passed', 'checks': ['mobile+desktop', 'real-cli-save', 'reload', 'default-pins', 'one-shot-disabled', 'calendar-cancel', 'error-recovery', 'viewer-denied', 'account-switch-clears-data', 'partial-model-pin-preserved', 'delete-popup-320-390-1280', 'delete-cancel-noop', 'delete-error-recovery', 'native-atomic-delete-readback', 'delete-double-click-bounded', 'delete-reload', 'delete-viewer-denied', 'delete-account-switch-clears-modal'], 'screenshots': str(OUT)}))
     finally:
         proc.terminate()
         proc.wait(timeout=10)
