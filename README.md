@@ -3,11 +3,15 @@
 Creation date: 2026-09-20
 Status: working initial public release
 
-This repository packages a Hermes skill plus helper scripts for a read-only Telegram Mini App that shows:
+This repository packages a Hermes skill plus helper scripts for an access-controlled Telegram Mini App that shows:
 
 - connected service/access checks;
 - provider-neutral subscription/quota trackers;
-- active Hermes cron jobs with human-readable schedules and local timezone display.
+- active Hermes cron jobs with human-readable schedules and local timezone display;
+- narrow cron-task editing: model selection, reasoning slider, and interval slider for repeating jobs;
+- explicit task deletion via a separate confirmation dialog: «Вы уверены что хотите удалить». Cancel/Escape make no request; confirmed deletion is verified against Hermes storage.
+
+Cron writes are authenticated separately with `cron.edit_allowed_users` (inheriting `telegram.allowed_users` only when the key is absent; an explicit empty list disables edits); the endpoint only exposes model/reasoning/schedule edits and exact-ID deletion, never arbitrary commands. Deletion requires a signed editor request with boolean `confirmed: true`; duplicate requests for an absent ID are verified no-ops. Deletion uses an exact-ID transaction under fail-closed local/cross-process locks and the Hermes atomic writer; it never falls back to a name. Output/notepad history is retained. An uncertain write result is not automatically retried, and raw malformed storage cannot count as an empty job list. The picker uses actual Hermes model IDs: an unavailable `gpt-6.1-luna` is never synthesized or silently replaced with `gpt-6-luna`.
 
 It is based on a real Hermes operator panel, but the subscription tracking was redesigned so users are not locked to one provider such as `openai-codex`.
 
@@ -49,6 +53,16 @@ Local URL:
 ```text
 http://127.0.0.1:9120/miniapp
 ```
+
+## Server disk and private Happ VPN links
+
+The overview includes local filesystem capacity/used/available bytes, an available-space-based utilization bar and low-space warning. OS-reserved bytes are shown separately; no cleanup runs automatically. `server.disk_path` is configured locally, never supplied by an API request.
+
+Enable `vpn` only for existing profiles. Each profile declares an ID/label, required systemd `services`, loopback `probe_ports`, and a private `link_file`. Status means those daemons and local listeners are ready; it does **not** prove a phone connection, external reachability or a functioning tunnel.
+
+Set explicit `vpn.link_allowed_users`; missing/empty means deny, independently of normal dashboard-viewer access. A signed `vpn_link` action additionally requires the normal viewer allowlist, and accepts only a configured profile ID. Normal status/collect output and public HTML never contain a client URI. Only the separately authorized on-demand response returns the exact sensitive import URI, with `no-store`; do not log/forward that response or open a secret-bearing dialog in report screenshots.
+
+Keep one `vless://` line in a regular owner-controlled `0600` file outside Git; symlinks, public permissions, invalid formats and oversized files fail closed without echoing their content. The UI opens a private dialog, then copies on a second user gesture for mobile clipboard compatibility. If both clipboard methods fail, it selects the text for manual copying. Closing/Escape, identity changes, or a current status response revoking copy permission scrub the field and invalidate pending requests, even with unchanged Telegram identity; late responses cannot restore the URI or fill another operation's dialog. There is no browser persistent storage and no VPN change/restart capability.
 
 ## Hosting model
 
@@ -126,6 +140,17 @@ pytest -q
 python3 -m py_compile scripts/operator_miniapp_status.py
 python3 scripts/operator_miniapp_status.py --config tests/fixtures/sample-config.yaml collect --pretty
 ```
+
+Optional real-browser/CLI regression (requires an installed Hermes CLI):
+
+```bash
+uv run --with playwright playwright install chromium --only-shell
+uv run --with playwright --with PyYAML python tests/browser_cron_editor.py scripts/operator_miniapp_status.py
+```
+
+This creates a disposable `HERMES_HOME`, never edits the operator's real jobs, and never runs inference. It checks mobile/desktop layout, actual CLI saves and reload, clearing model/reasoning pins, calendar-conversion cancellation, one-shot frequency protection, save failures, and viewer/account-switch denial.
+
+The reasoning slider stores Hermes-supported levels; the inference provider may clamp unsupported levels at execution time. Selecting a catalog model does not prove the account has quota for inference.
 
 ## Repository layout
 

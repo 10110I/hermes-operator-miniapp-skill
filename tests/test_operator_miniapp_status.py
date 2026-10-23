@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import http.client
 import json
+import threading
 import time
 import urllib.parse
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -172,6 +175,14 @@ def test_cron_schedule_and_next_run_use_configured_timezone():
     assert "04:00" in jobs[1]["next_run_display"]
 
 
+def test_calendar_schedule_is_not_misclassified_as_slider_interval():
+    assert app.schedule_kind("every Monday at 09:00") == "cron"
+
+
+def test_schedule_kind_only_marks_slider_backed_repeating_intervals():
+    assert app.schedule_kind("every 5 days") == "interval"
+
+
 def test_collect_status_redacts_secret_like_errors(tmp_path):
     bad = tmp_path / "bad.py"
     bad.write_text("print('token=supersecret1234567890')\nraise SystemExit(1)\n", encoding="utf-8")
@@ -202,3 +213,144 @@ def test_telegram_init_data_signature_and_allowlist():
         app.validate_init_data(init_data, bot_token=bot_token, allowed_users=[42])
     with pytest.raises(PermissionError):
         app.validate_init_data(init_data.replace("hash=", "hash=bad"), bot_token=bot_token, allowed_users=[1002597417])
+
+
+def test_parse_cron_list_includes_paused_jobs_and_exposes_editor_state():
+    text = """  123456789abc [paused]
+    Name: Paused task
+    Schedule: every 7200m
+    Next run: 2026-10-25T12:43:10+00:00
+  abcdef123456 [active]
+    Name: Daily task
+    Schedule: 0 7 * * *
+    Next run: 2026-10-23T07:00:00+00:00
+"""
+
+    jobs = app.parse_cron_list(text, app.ZoneInfo("UTC"))
+
+    assert [job["state"] for job in jobs] == ["paused", "active"]
+    assert jobs[0]["schedule_kind"] == "interval"
+    assert jobs[0]["schedule_minutes"] == 7200
+    assert jobs[0]["periodicity_index"] == app.CRON_PERIODICITY_MINUTES.index(7200)
+    assert jobs[1]["schedule_kind"] == "cron"
+    assert jobs[1]["schedule_minutes"] == 1440
+
+
+def test_edit_cron_job_updates_model_reasoning_and_selected_period(monkeypatch):
+    list_output = """  123456789abc [active]
+    Name: Daily task
+    Schedule: 0 7 * * *
+"""
+    calls = []
+
+    def fake_run_command(command, **kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            return app.subprocess.CompletedProcess(command, 0, list_output, "")
+        return app.subprocess.CompletedProcess(command, 0, "updated", "")
+
+    monkeypatch.setattr(app, "run_command", fake_run_command)
+    monkeypatch.setattr(app, "cron_job_records", lambda: [{"id": "123456789abc", "model": "gpt-6.1-sol", "provider": "openai-codex", "reasoning_effort": "high", "schedule": {"kind": "interval", "minutes": 60, "display": "every 60m"}}])
+    monkeypatch.setattr(app, "cron_model_options", lambda config, jobs: [
+        {"value": app.encode_cron_model_choice("openai-codex", "gpt-6.1-sol"), "provider": "openai-codex", "model": "gpt-6.1-sol", "label": "openai-codex · gpt-6.1-sol"}
+    ])
+    selected_model = app.encode_cron_model_choice("openai-codex", "gpt-6.1-sol")
+
+    result = app.edit_cron_job({"cron": {"enabled": True}}, {
+        "job_id": "123456789abc",
+        "model_choice": selected_model,
+        "reasoning_effort": "high",
+        "periodicity_index": app.CRON_PERIODICITY_MINUTES.index(60),
+    })
+
+    assert result["ok"] is True
+    assert calls[1] == [
+        "hermes", "cron", "edit", "123456789abc",
+        "--model", "gpt-6.1-sol", "--provider", "openai-codex",
+        "--reasoning-effort", "high", "--schedule", "every 60m",
+    ]
+
+
+def test_edit_cron_job_checks_the_saved_state(monkeypatch):
+    list_output = "  123456789abc [active]\n    Schedule: 0 7 * * *\n"
+    calls = []
+
+    def fake_run_command(command, **kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            return app.subprocess.CompletedProcess(command, 0, list_output, "")
+        return app.subprocess.CompletedProcess(command, 0, "updated", "")
+
+    monkeypatch.setattr(app, "run_command", fake_run_command)
+    monkeypatch.setattr(app, "cron_job_records", lambda: [{"id": "123456789abc", "model": "gpt-6.1-sol", "provider": "openai-codex", "reasoning_effort": "medium", "schedule": "every 60m"}])
+    selected = app.encode_cron_model_choice("openai-codex", "gpt-6.1-sol")
+    monkeypatch.setattr(app, "cron_model_options", lambda config, jobs: [
+        {"value": selected, "provider": "openai-codex", "model": "gpt-6.1-sol", "label": "model"}
+    ])
+
+    with pytest.raises(ValueError, match="verified"):
+        app.edit_cron_job({"cron": {"enabled": True}}, {
+            "job_id": "123456789abc", "model_choice": selected,
+            "reasoning_effort": "high",
+            "periodicity_index": app.CRON_PERIODICITY_MINUTES.index(60),
+        })
+
+
+def test_edit_cron_job_rejects_unlisted_model_before_mutation(monkeypatch):
+    calls = []
+    list_output = "  123456789abc [active]\n    Schedule: every 15m\n"
+    monkeypatch.setattr(app, "run_command", lambda command, **kwargs: (calls.append(command) or app.subprocess.CompletedProcess(command, 0, list_output, "")))
+    monkeypatch.setattr(app, "cron_model_options", lambda config, jobs: [])
+
+    with pytest.raises(ValueError, match="model"):
+        app.edit_cron_job({"cron": {"enabled": True}}, {
+            "job_id": "123456789abc",
+            "model_choice": app.encode_cron_model_choice("not-configured", "not-a-model"),
+            "reasoning_effort": "medium",
+        })
+
+    assert len(calls) == 1
+
+
+def test_cron_editor_controls_are_sliders_and_model_select():
+    html = app.MINIAPP_HTML
+    assert 'type="range"' in html
+    assert 'data-reasoning' in html
+    assert 'data-periodicity' in html
+    assert 'data-model' in html
+    assert "cron_update" in html
+
+
+def test_cron_update_endpoint_requires_dedicated_editor_allowlist(monkeypatch):
+    token = "123456:TEST_TOKEN"
+    monkeypatch.setenv("OPERATOR_TEST_BOT_TOKEN", token)
+    config = {
+        "telegram": {"bot_token_env": "OPERATOR_TEST_BOT_TOKEN", "allowed_users": [1002597417]},
+        "cron": {"enabled": True, "edit_allowed_users": []},
+    }
+    edit_calls = []
+    monkeypatch.setattr(app, "edit_cron_job", lambda *args: edit_calls.append(args) or {"ok": True})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), app.make_handler(app.ServerContext(config)))
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        body = json.dumps({"action": "cron_update", "init_data": signed_init_data(token)})
+        conn.request("POST", "/api/status", body=body, headers={"Content-Type": "application/json"})
+        denied = conn.getresponse()
+        assert denied.status == 403
+        assert denied.getheader("Cache-Control") == "no-store"
+        denied.read()
+        assert edit_calls == []
+
+        config["cron"]["edit_allowed_users"] = [1002597417]
+        conn.request("POST", "/api/status", body=body, headers={"Content-Type": "application/json"})
+        allowed = conn.getresponse()
+        assert allowed.status == 200
+        assert json.loads(allowed.read())["ok"] is True
+        assert len(edit_calls) == 1
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)

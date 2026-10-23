@@ -11,6 +11,23 @@ telegram:
     - 123456789
   max_age_seconds: 86400
 
+# Local filesystem metrics. Percent uses used/(used + available), excluding OS reserve.
+server:
+  enabled: true
+  disk_path: /
+
+# Private Happ import links are never returned by the normal status endpoint.
+# Keep links outside the repository in owner-only 0600 regular files.
+vpn:
+  enabled: false
+  link_allowed_users: []  # Explicit owner IDs only; no implicit viewer inheritance.
+  profiles:
+    - id: main
+      label: Happ
+      services: [vpn.service]
+      probe_ports: [443]  # Loopback TCP checks; not a phone/end-to-end VPN test.
+      link_file: ~/.config/hermes-operator/happ.txt
+
 # These are examples. Run `discover-services --pretty` and enable only
 # the services this Hermes instance should display.
 services:
@@ -125,3 +142,5 @@ cron:
   enabled: true
   command: hermes cron list --all
   timeout_seconds: 60
+  # Empty list disables cron edits. Set owner IDs explicitly; an absent key inherits telegram.allowed_users.
+  edit_allowed_users: []

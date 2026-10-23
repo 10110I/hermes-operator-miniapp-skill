@@ -13,7 +13,7 @@ metadata:
 
 # Hermes Operator Mini App Status
 
-Build and install a narrow read-only Telegram Mini App for Hermes operators. It shows connected services, configured subscription/quota trackers, and active cron jobs without exposing provider secrets or the full Hermes dashboard.
+Build and install a narrow, access-controlled Telegram Mini App for Hermes operators. It shows connected services, configured subscription/quota trackers, and active cron jobs; explicitly allowlisted operators can edit a cron job's model, reasoning effort, and repeating interval without exposing provider secrets or the full Hermes dashboard.
 
 This skill is intentionally provider-neutral: it does not assume the user has `openai-codex`. Subscription limits are configured as `subscription_trackers` during setup.
 
@@ -22,7 +22,7 @@ This skill is intentionally provider-neutral: it does not assume the user has `o
 Use when a user wants:
 
 - a Telegram Mini App status panel for Hermes;
-- read-only visibility into connected services and cron jobs;
+- visibility into connected services and cron jobs, with narrowly scoped cron editing;
 - subscription/quota bars for whatever providers they actually use;
 - a setup flow that asks which providers/subscriptions to track.
 
@@ -30,6 +30,7 @@ Do not use for:
 
 - publishing a full Hermes dashboard publicly;
 - mutating provider credentials or subscription state;
+- arbitrary shell/command execution through the Mini App;
 - storing API keys in the Mini App config.
 
 ## Prerequisites
@@ -77,6 +78,8 @@ Before writing config, ask the user these questions in one short batch:
 8. Which HTTPS URL will be used for the Mini App, or should setup stop at localhost?
 9. Where will it be hosted: same VPS as Hermes, home machine behind a tunnel, or a separate backend with a sanitized snapshot collector? Default to same host as Hermes.
 
+`init-config` also asks for a cron-editor Telegram allowlist. Leave it blank to disable cron editing; enter the owner IDs explicitly to enable it. Existing configs without this key inherit `telegram.allowed_users`.
+
 For installation details, read `references/installation.md`. For service discovery details, read `references/service-discovery.md`. For hosting details, read `references/hosting.md`. For the subscription model details, read `references/subscription-tracker-model.md`.
 
 ## Quick Start
@@ -110,7 +113,7 @@ The local page will show `Mini App unavailable` unless it is opened through Tele
 8. **Choose hosting.** Default to the same host that runs Hermes, using `templates/hermes-operator-miniapp.service` for the local server. If the host is behind NAT, use Cloudflare Tunnel or Tailscale Funnel/Serve. Completion: the Mini App process is local-only on `127.0.0.1` and has access to local Hermes probes.
 9. **Expose narrowly.** Put Caddy/nginx/Cloudflare/Tailscale in front of only `/miniapp`, `/api/status`, and `/health`. Completion: public `/miniapp` returns HTML, public `/api/status` rejects unsigned requests, and the full Hermes dashboard is not reachable through this endpoint.
 10. **Register Telegram WebApp.** Set bot menu/button to the HTTPS `/miniapp` URL. Completion: Telegram `getChatMenuButton` returns `type=web_app` with the expected URL.
-11. **Verify end to end.** Open the Mini App from Telegram as an allowlisted user. Completion: services, subscriptions, and cron jobs render; unauthorized/signed-invalid requests get 403; no secret appears in page text or API JSON.
+11. **Verify end to end.** Open the Mini App from Telegram as an allowlisted user. Completion: services, subscriptions, and active/paused cron jobs render; an allowed editor can change model/reasoning and a repeating interval, with saved state verified; unauthorized/signed-invalid requests get 403; no secret appears in page text or API JSON.
 
 ## Service Probe Contract
 
@@ -178,7 +181,8 @@ This lets different providers use different collection scripts while the Mini Ap
 ## Security Rules
 
 - Validate Telegram `initData` on the server before returning status.
-- Enforce explicit Telegram user allowlist after signature validation.
+- Enforce the Telegram user allowlist after signature validation; for `cron_update`, use `cron.edit_allowed_users` when present (an empty list denies all edits), otherwise inherit `telegram.allowed_users`.
+- The cron endpoint accepts only model/provider, reasoning effort, and interval-index fields; it cannot execute arbitrary shell commands.
 - Never place bot tokens, API keys, OAuth refresh tokens, cookies, or connection strings in config.
 - Keep public reverse proxy narrow; do not proxy the full Hermes dashboard.
 - Treat command output as untrusted and redact token-like strings before returning errors.
