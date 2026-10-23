@@ -54,6 +54,16 @@ Local URL:
 http://127.0.0.1:9120/miniapp
 ```
 
+## Server disk and private Happ VPN links
+
+The overview includes local filesystem capacity/used/available bytes, an available-space-based utilization bar and low-space warning. OS-reserved bytes are shown separately; no cleanup runs automatically. `server.disk_path` is configured locally, never supplied by an API request.
+
+Enable `vpn` only for existing profiles. Each profile declares an ID/label, required systemd `services`, loopback `probe_ports`, and a private `link_file`. Status means those daemons and local listeners are ready; it does **not** prove a phone connection, external reachability or a functioning tunnel.
+
+Set explicit `vpn.link_allowed_users`; missing/empty means deny, independently of normal dashboard-viewer access. A signed `vpn_link` action additionally requires the normal viewer allowlist, and accepts only a configured profile ID. Normal status/collect output and public HTML never contain a client URI. Only the separately authorized on-demand response returns the exact sensitive import URI, with `no-store`; do not log/forward that response or open a secret-bearing dialog in report screenshots.
+
+Keep one `vless://` line in a regular owner-controlled `0600` file outside Git; symlinks, public permissions, invalid formats and oversized files fail closed without echoing their content. The UI opens a private dialog, then copies on a second user gesture for mobile clipboard compatibility. If both clipboard methods fail, it selects the text for manual copying. Closing/Escape, identity changes, or a current status response revoking copy permission scrub the field and invalidate pending requests, even with unchanged Telegram identity; late responses cannot restore the URI or fill another operation's dialog. There is no browser persistent storage and no VPN change/restart capability.
+
 ## Hosting model
 
 Default hosting is **self-hosted on the same machine that runs Hermes**:

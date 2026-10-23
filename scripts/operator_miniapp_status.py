@@ -968,6 +968,110 @@ def delete_cron_job(config: dict[str, Any], payload: dict[str, Any]) -> dict[str
     return {"ok": True, "job_id": job_id, "message": "Задача удалена."}
 
 
+def collect_server_status(config: dict[str, Any]) -> dict[str, Any]:
+    settings = config.get("server", {}) or {}
+    if not settings.get("enabled", True):
+        return {"enabled": False}
+    try:
+        usage = shutil.disk_usage(str(settings.get("disk_path") or "/"))
+        usable = usage.used + usage.free
+        if usage.total <= 0 or usage.used < 0 or usage.free < 0 or usable <= 0:
+            raise ValueError("Invalid filesystem counters")
+        percent = round(100 * usage.used / usable, 1) if usable else 0
+        return {"enabled": True, "disk": {
+            "total_bytes": usage.total, "used_bytes": usage.used,
+            "available_bytes": usage.free, "reserved_bytes": max(0, usage.total - usable),
+            "used_percent": percent,
+            "status": "critical" if percent >= 95 else ("warning" if percent >= 85 else "ok"),
+        }}
+    except (OSError, ValueError):
+        return {"enabled": True, "disk": {"status": "unknown", "message": "Не удалось получить данные диска."}}
+
+
+def vpn_port_open(port: int) -> bool:
+    import socket
+
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def collect_vpn_status(config: dict[str, Any]) -> dict[str, Any]:
+    settings = config.get("vpn", {}) or {}
+    if not settings.get("enabled", False):
+        return {"enabled": False, "profiles": []}
+    profiles = []
+    states: dict[str, str] = {}
+    for profile in settings.get("profiles", [])[:8]:
+        item = {"id": str(profile.get("id") or ""), "label": str(profile.get("label") or "Happ"), "status": "unknown"}
+        units, ports = profile.get("services", []), profile.get("probe_ports", [])
+        if (not units or len(units) > 8 or any(not isinstance(unit, str) or not re.fullmatch(r"[A-Za-z0-9_.@-]+\.service", unit) or unit.startswith("-") for unit in units)
+                or not ports or len(ports) > 8 or any(type(port) is not int or not 1 <= port <= 65535 for port in ports)):
+            profiles.append(item)
+            continue
+        try:
+            for unit in units:
+                if unit not in states:
+                    result = run_command(["systemctl", "show", "--property=ActiveState,SubState", "--", unit], timeout=3)
+                    values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+                    states[unit] = values.get("ActiveState", "unknown") if result.returncode == 0 else "unknown"
+            service_states = [states[unit] for unit in units]
+            active = all(state == "active" for state in service_states)
+            listening = all(vpn_port_open(port) for port in ports) if active else False
+            item.update({"service_active": active, "listener_ready": listening,
+                         "status": "running" if active and listening else ("degraded" if active else ("unknown" if "unknown" in service_states else "stopped"))})
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        profiles.append(item)
+    return {"enabled": True, "profiles": profiles}
+
+
+def vpn_copy_allowed(config: dict[str, Any], user_id: int) -> bool:
+    settings = config.get("vpn", {}) or {}
+    allowed = settings.get("link_allowed_users", [])
+    return bool(settings.get("enabled", False) and isinstance(allowed, list)
+                and str(user_id) in {str(value) for value in allowed if type(value) is int or (isinstance(value, str) and value.isdigit())})
+
+
+def read_vpn_link(config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Read only a configured private import file; callers must authorize first."""
+    import stat
+
+    settings = config.get("vpn", {}) or {}
+    profile_id = payload.get("profile_id")
+    if (not settings.get("enabled", False) or not isinstance(profile_id, str)
+            or set(payload) - {"action", "init_data", "profile_id"}):
+        raise ValueError("Недопустимый запрос ссылки Happ.")
+    profile = next((item for item in settings.get("profiles", [])[:8] if item.get("id") == profile_id), None)
+    if not profile:
+        raise ValueError("Профиль Happ недоступен.")
+    try:
+        path = pathlib.Path(profile["link_file"]).expanduser()
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_size > 8192 or info.st_mode & 0o077
+                    or info.st_uid not in {0, os.geteuid()}):
+                raise ValueError("Invalid private file")
+            raw = os.read(fd, 8193)
+        finally:
+            os.close(fd)
+        if len(raw) > 8192:
+            raise ValueError("Import too large")
+        uri = raw.decode("utf-8").strip()
+        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in uri):
+            raise ValueError("Invalid URI characters")
+        parsed = urllib.parse.urlsplit(uri)
+        if (parsed.scheme != "vless" or not parsed.hostname or not parsed.port or parsed.password is not None
+                or not re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", parsed.username or "")):
+            raise ValueError("Invalid import URI")
+        return {"ok": True, "profile_id": profile_id, "uri": uri}
+    except Exception:
+        raise ValueError("Не удалось безопасно прочитать ссылку Happ.") from None
+
+
 def collect_status(config: dict[str, Any]) -> dict[str, Any]:
     zone = tz(config)
     checked_at = now_iso()
@@ -977,6 +1081,8 @@ def collect_status(config: dict[str, Any]) -> dict[str, Any]:
         "checked_at": checked_at,
         "checked_at_display": format_local(checked_at, zone),
         "time_zone": zone.key,
+        "server": collect_server_status(config),
+        "vpn": collect_vpn_status(config),
         "services": collect_services(config),
         "subscriptions": collect_subscriptions(config),
         "cron_jobs": cron_jobs,
@@ -993,6 +1099,7 @@ MINIAPP_HTML = """<!doctype html>
 :root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#08111f;color:#eef6ff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#155e7566,#08111f 46%,#020617)}.wrap{max-width:640px;margin:0 auto;padding:18px 14px 42px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.eyebrow{font-size:12px;color:#93c5fd}.title{margin:2px 0 0;font-size:28px;letter-spacing:-.04em}.muted{color:#94a3b8}.small{font-size:12px}.card{border:1px solid #ffffff18;border-radius:24px;background:#0b1220d9;padding:15px;margin-top:12px;box-shadow:0 12px 34px #0005}.card h2{font-size:17px;margin:0 0 12px}.row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #ffffff10}.row:first-of-type{border-top:0}.name{font-weight:750}.caption{font-size:12px;color:#94a3b8;margin-top:3px}.pill{font-size:11px;text-transform:uppercase;border-radius:999px;border:1px solid #ffffff24;padding:5px 8px;background:#ffffff10;white-space:nowrap}.ok{color:#86efac}.error,.reauth{color:#fca5a5}.limited,.unknown{color:#fde68a}.missing{color:#cbd5e1}.account{display:block;padding:13px 0;border-top:1px solid #ffffff10}.account:first-of-type{border-top:0}.account-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.account-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px}.account-meta .caption{margin-top:0}.status-badge{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-radius:999px;border:1px solid #ffffff24;padding:3px 7px;background:#ffffff0d;white-space:nowrap}.bars{display:grid;gap:8px;margin-top:10px}.barline{display:grid;gap:6px;padding:9px;border-radius:14px;background:#ffffff08;border:1px solid #ffffff0d}.limit-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}.limit-title{font-size:12px;font-weight:800;color:#e2e8f0}.limit-stats{font-size:12px;color:#94a3b8}.limit-stats strong{color:#e2e8f0}.limit-note{margin-top:0}.bar{height:9px;background:#ffffff14;border-radius:999px;overflow:hidden}.fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#eab308,#ef4444)}button{border:0;border-radius:999px;padding:10px 14px;background:#38bdf8;color:#04111f;font-weight:800}button:disabled{opacity:.72;cursor:progress}.hidden{display:none}pre{white-space:pre-wrap;word-break:break-word;color:#fecaca}.footer{margin-top:14px;text-align:center;color:#64748b;font-size:11px}</style><style>
 .cron-job{border-top:1px solid #ffffff12;padding-top:10px;margin-top:10px}.cron-job:first-of-type{border-top:0;margin-top:0;padding-top:0}.cron-editor{margin-top:6px;border:1px solid #ffffff16;border-radius:14px;background:#ffffff06}.cron-editor summary{padding:10px 12px;cursor:pointer;font-size:13px;font-weight:700;color:#7dd3fc}.cron-fields{display:grid;gap:12px;padding:0 12px 12px}.cron-field{display:grid;gap:6px;font-size:13px}.cron-field select{width:100%;min-height:40px;border-radius:10px;border:1px solid #ffffff22;background:#111c2d;color:#eef6ff;padding:8px}.cron-range{width:100%;accent-color:#22d3ee;touch-action:pan-y}.cron-range:disabled{opacity:.42}.cron-value{color:#a5f3fc;font-weight:750}.cron-hint{font-size:11px;color:#94a3b8;line-height:1.4}.cron-save{justify-self:start;border:0;border-radius:10px;background:#0e7490;color:#ecfeff;font-weight:750;padding:10px 14px}.cron-save:disabled{opacity:.55}.cron-message{font-size:12px;color:#86efac;min-height:16px}.cron-message.error{color:#fca5a5}
 .cron-delete{background:#541c27;color:#fecdd3;border:1px solid #f8717166;min-height:44px}.cron-delete:hover{background:#702030}.cron-delete-action{margin-top:10px}.cron-delete-dialog{color:#eef6ff;background:#102137;border:1px solid #ffffff24;border-radius:18px;padding:22px;width:calc(100% - 32px);max-width:420px;max-height:calc(100dvh - 32px);overflow:auto;box-shadow:0 20px 80px #0009}.cron-delete-dialog::backdrop{background:#020617bd;backdrop-filter:blur(3px)}.cron-delete-dialog h2{margin:0 0 14px;font-size:21px;line-height:1.3}.cron-delete-dialog p{overflow-wrap:anywhere;line-height:1.5}.cron-delete-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}.cron-delete-actions button{flex:1;min-height:44px}.cron-delete-dialog button:disabled{opacity:.55;cursor:wait}
+#server-status .bar i{display:block;height:100%;background:#38bdf8;border-radius:inherit}.server-disk-head,.vpn-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.server-disk-head{font-weight:700;margin:8px 0}.server-disk-details{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:9px;font-size:13px}.server-warning{margin-top:10px;padding:9px 11px;border-radius:10px;background:#ef44441a;color:#fca5a5;font-size:13px}.vpn-profile{padding:13px 0;border-bottom:1px solid #ffffff12}.vpn-profile:last-of-type{border:0}.vpn-head .name{overflow-wrap:anywhere}.vpn-profile button{margin-top:10px;min-height:44px}.vpn-dialog{color:#eef6ff;background:#102137;border:1px solid #ffffff24;border-radius:18px;padding:20px;width:calc(100% - 32px);max-width:460px;max-height:calc(100dvh - 32px);overflow:auto;box-shadow:0 20px 80px #0009}.vpn-dialog::backdrop{background:#020617bd;backdrop-filter:blur(3px)}.vpn-dialog h2{margin:0 0 10px;font-size:22px}.vpn-dialog textarea{display:block;width:100%;min-height:116px;resize:vertical;background:#08111f;color:#eef6ff;border:1px solid #ffffff30;border-radius:10px;padding:10px;font:12px/1.5 ui-monospace,monospace;overflow-wrap:anywhere;margin:8px 0}.vpn-dialog textarea[hidden]{display:none}.vpn-dialog-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.vpn-dialog-actions button{flex:1;min-height:44px}.vpn-dialog button:disabled{opacity:.5}.vpn-note{line-height:1.5;margin-top:10px}
 </style></head>
 <body><main class="wrap"><div class="top"><div><div id="verified" class="eyebrow">Проверяю Telegram…</div><h1 class="title">Hermes Operator</h1><div class="muted small">Сервисы, подписки, cron</div></div><button id="refresh" type="button">Обновить</button></div><p id="cron-feedback" class="muted small" role="status" hidden></p><div id="error" class="card hidden"><b>Ошибка доступа</b><pre id="errtext"></pre></div><div id="content"><div class="card muted">Загружаю…</div></div><div class="footer">Данные без токенов и секретов</div></main>
 <dialog id="cron-delete-dialog" class="cron-delete-dialog" aria-labelledby="cron-delete-title" aria-describedby="cron-delete-name">
@@ -1000,6 +1107,13 @@ MINIAPP_HTML = """<!doctype html>
 <p id="cron-delete-name"></p><p class="muted small">Будущие запуски этой задачи будут отменены. Восстановить её из интерфейса нельзя.</p>
 <div id="cron-delete-error" class="cron-message error" role="alert"></div>
 <div class="cron-delete-actions"><button id="cron-delete-cancel" type="button" autofocus>Отмена</button><button id="cron-delete-confirm" class="cron-delete" type="button">Удалить</button></div>
+</dialog>
+<dialog id="vpn-link-dialog" class="vpn-dialog" aria-labelledby="vpn-link-title">
+<h2 id="vpn-link-title">Подключение Happ</h2><div id="vpn-link-profile" class="muted small"></div>
+<div id="vpn-link-message" class="cron-message" role="status"></div>
+<textarea id="vpn-link-value" aria-label="Ссылка подключения Happ" readonly spellcheck="false" autocomplete="off" autocapitalize="off" hidden></textarea>
+<p class="small vpn-note">Happ → «+» → импорт из буфера обмена. Ссылка даёт доступ к вашему VPN — не пересылайте её посторонним.</p>
+<div class="vpn-dialog-actions"><button id="vpn-link-close" type="button" autofocus>Закрыть</button><button id="vpn-link-copy" type="button" disabled>Скопировать ссылку</button></div>
 </dialog>
 <script src="https://telegram.org/js/telegram-web-app.js"></script><script>
 const tg=window.Telegram&&window.Telegram.WebApp; tg&&tg.ready&&tg.ready(); tg&&tg.expand&&tg.expand();
@@ -1011,6 +1125,57 @@ function percent(v){const n=Number(v);return Number.isFinite(n)?`${Math.round(n)
 function resetBank(a){if(a.reset_bank_text)return `<span class="caption">${esc(a.reset_bank_text)}</span>`; if(a.reset_bank!==undefined&&a.reset_bank!==null&&a.reset_bank!==''){const bank=Number(a.reset_bank);const label=Number.isFinite(bank)&&bank===0?'нет':esc(a.reset_bank);return `<span class="caption">reset bank: ${label}</span>`} return ''}
 function accountCard(a){const windows=(a.windows||[]).map(w=>{const used=Math.max(0,Math.min(100,Number(w.used_percent)||0));const usedText=percent(w.used_percent);const remainingText=percent(w.remaining_percent);const label=esc(w.label||w.key||'лимит');return `<div class="barline"><div class="limit-head"><span class="limit-title">${label}</span><span class="limit-stats"><strong>${remainingText}</strong> осталось · ${usedText} использовано</span></div><div class="bar" aria-label="${label}: использовано ${usedText}, осталось ${remainingText}"><div class="fill" style="width:${used}%"></div></div>${w.reset_text?`<div class="caption limit-note">${esc(w.reset_text)}</div>`:''}</div>`}).join('');return `<div class="account"><div class="account-head"><div><div class="name">${esc(a.label)}</div><div class="account-meta">${a.plan?`<span class="caption">plan ${esc(a.plan)}</span>`:(a.message?`<span class="caption">${esc(a.message)}</span>`:'')}${resetBank(a)}<span class="status-badge ${tone(a.status)}">${esc(statusText(a.status))}</span></div></div></div>${windows?`<div class="bars">${windows}</div>`:''}</div>`}
 function subscriptionCard(s){return `<section class="card"><h2>${esc(s.label||s.id)}</h2><div class="caption">${esc(s.provider||'subscription')} · доступно: ${esc(s.available_accounts??0)} · требует внимания: ${esc(s.attention_accounts??0)}</div>${s.error?`<pre>${esc(s.error)}</pre>`:''}${(s.accounts||[]).map(accountCard).join('')||'<div class="muted">Нет данных.</div>'}</section>`}
+function bytesLabel(value){const n=Number(value);if(!Number.isFinite(n))return 'нет данных';const gib=n/1073741824;return gib>=1?`${gib.toFixed(1)} ГиБ`:`${(n/1048576).toFixed(0)} МиБ`}
+function serverCard(server){
+ if(!server||server.enabled===false)return '';
+ const disk=server.disk||{};
+ if(disk.status==='unknown')return '<section class="card" id="server-status"><h2>Сервер</h2><div class="muted">Данные диска недоступны.</div></section>';
+ const used=Math.max(0,Math.min(100,Number(disk.used_percent)||0));
+ return `<section class="card" id="server-status"><h2>Сервер</h2><div class="server-disk-head"><span>Заполненность диска</span><span>${used.toFixed(1)}%</span></div><div class="bar" role="progressbar" aria-label="Заполненность диска" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${used}"><i style="width:${used}%;${disk.status==='critical'?'background:#f87171':disk.status==='warning'?'background:#fbbf24':''}"></i></div><div class="server-disk-details"><span>Занято: <b>${bytesLabel(disk.used_bytes)}</b></span><span>Доступно: <b>${bytesLabel(disk.available_bytes)}</b></span><span>Всего: ${bytesLabel(disk.total_bytes)}</span></div>${disk.reserved_bytes>0?`<div class="caption">Резерв файловой системы: ${bytesLabel(disk.reserved_bytes)}; в доступное место не входит.</div>`:''}${['critical','warning'].includes(disk.status)?'<div class="server-warning">Мало свободного места. Очистка автоматически не выполняется.</div>':''}</section>`;
+}
+function vpnCard(vpn,canCopy){
+ if(!vpn||!vpn.enabled)return '';
+ const labels={running:'Работает',stopped:'Остановлен',degraded:'Нужна проверка',unknown:'Нет данных'};
+ return `<section class="card" id="vpn-status"><h2>VPN для Happ</h2>${(vpn.profiles||[]).map(profile=>`<div class="vpn-profile"><div class="vpn-head"><span class="name">${esc(profile.label)}</span><span class="pill ${profile.status==='running'?'ok':profile.status==='stopped'?'error':'limited'}">${labels[profile.status]||labels.unknown}</span></div>${canCopy?`<button type="button" data-vpn-link data-profile-id="${esc(profile.id)}">Ссылка для Happ</button>`:''}</div>`).join('')||'<div class="muted">Профили не настроены.</div>'}<div class="caption vpn-note">Статус сервиса и локальных портов. Подключение с телефона здесь не проверяется.</div></section>`;
+}
+let vpnLinkOperation=null;
+function closeVpnLink(){
+ vpnLinkOperation=null;
+ const dialog=$('vpn-link-dialog');if(dialog.open)dialog.close();
+ $('vpn-link-value').value='';$('vpn-link-value').hidden=true;$('vpn-link-profile').textContent='';$('vpn-link-message').textContent='';$('vpn-link-copy').disabled=true;
+}
+async function openVpnLink(button){
+ const identity=(tg&&tg.initData)||'';
+ const profile=(window.__vpnProfiles||[]).find(item=>item.id===button.dataset.profileId);
+ if(!profile||!identity||identity!==statusLoadIdentity){load(true);return}
+ closeVpnLink();const operation={identity,profileId:profile.id};vpnLinkOperation=operation;
+ const isCurrent=()=>vpnLinkOperation===operation&&identity===((tg&&tg.initData)||'')&&identity===statusLoadIdentity;
+ $('vpn-link-profile').textContent=profile.label;$('vpn-link-message').textContent='Получаю защищённую ссылку…';$('vpn-link-dialog').showModal();$('vpn-link-close').focus();
+ try{
+  const response=await fetch('/api/status',{method:'POST',cache:'no-store',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({action:'vpn_link',init_data:identity,profile_id:profile.id})});
+  const data=await response.json();if(!isCurrent())return;
+  if(!response.ok||!data.uri)throw new Error('Ссылка недоступна. Закройте окно и обновите данные.');
+  $('vpn-link-value').value=data.uri;$('vpn-link-value').hidden=false;$('vpn-link-copy').disabled=false;$('vpn-link-message').textContent='Нажмите «Скопировать ссылку» и откройте Happ.';
+ }catch(error){if(isCurrent())$('vpn-link-message').textContent='Не удалось получить ссылку. Закройте окно и обновите данные.'}
+}
+async function copyVpnLink(){
+ const operation=vpnLinkOperation;
+ const isCurrent=()=>operation&&vpnLinkOperation===operation&&operation.identity===((tg&&tg.initData)||'')&&operation.identity===statusLoadIdentity;
+ if(!isCurrent()||$('vpn-link-copy').disabled||!$('vpn-link-value').value)return;
+ const value=$('vpn-link-value').value;$('vpn-link-copy').disabled=true;
+ try{
+  let copied=false;
+  if(navigator.clipboard&&navigator.clipboard.writeText){try{await navigator.clipboard.writeText(value);copied=true}catch(error){}}
+  if(!isCurrent())return;
+  if(!copied){$('vpn-link-value').focus();$('vpn-link-value').select();try{copied=document.execCommand('copy')}catch(error){}}
+  if(isCurrent())$('vpn-link-message').textContent=copied?'Ссылка скопирована. Теперь импортируйте её в Happ.':'Автокопирование недоступно. Скопируйте выделенный текст вручную.';
+ }finally{if(isCurrent())$('vpn-link-copy').disabled=false}
+}
+$('vpn-link-close').addEventListener('click',closeVpnLink);
+$('vpn-link-copy').addEventListener('click',copyVpnLink);
+$('vpn-link-dialog').addEventListener('cancel',event=>{event.preventDefault();closeVpnLink()});
+$('vpn-link-dialog').addEventListener('close',()=>{if(!$('vpn-link-dialog').open)closeVpnLink()});
+document.addEventListener('click',event=>{const button=event.target.closest('[data-vpn-link]');if(button)openVpnLink(button)});
 const CRON_REASONING_VALUES=['','none','minimal','low','medium','high','xhigh','max','ultra'];
 const CRON_REASONING_LABELS=['По умолчанию','none','minimal','low','medium','high','xhigh','max','ultra'];
 const CRON_PERIOD_MINUTES=[1,2,5,10,15,30,60,120,360,720,1440,2880,4320,7200,10080,20160,43200];
@@ -1085,14 +1250,14 @@ function saveCronEditor(button){
 }
 document.addEventListener('input',event=>{if(event.target.matches('[data-reasoning]'))event.target.closest('.cron-field').querySelector('[data-reasoning-value]').textContent=CRON_REASONING_LABELS[Number(event.target.value)];if(event.target.matches('[data-periodicity]')){event.target.dataset.dirty='1';event.target.closest('.cron-field').querySelector('[data-periodicity-value]').textContent=cronPeriodLabel(event.target.value)}});
 document.addEventListener('click',event=>{const button=event.target.closest('[data-cron-save]');if(button)saveCronEditor(button);const remove=event.target.closest('[data-cron-delete]');if(remove)openCronDelete(remove)});
-function render(data){$('verified').textContent='Telegram verified · '+esc(data.checked_at_display||data.checked_at); const subscriptions=data.subscriptions||[]; const cron=data.cron_jobs||[];window.__cronJobs=cron; $('content').innerHTML=`<section class="card"><h2>Подключённые сервисы</h2>${(data.services||[]).map(serviceRow).join('')||'<div class="muted">Сервисы не настроены.</div>'}</section>${subscriptions.length?subscriptions.map(subscriptionCard).join(''):'<section class="card"><h2>Подписки</h2><div class="muted">Трекеры подписок не настроены.</div></section>'}<section class="card"><h2>Cron-задачи</h2>${cron.length?cron.map(j=>cronRow(j,data.cron_models||[],data.cron_can_edit===true)).join(''):'<div class="muted">Активных задач нет.</div>'}</section>`;}
+function render(data){$('verified').textContent='Telegram verified · '+esc(data.checked_at_display||data.checked_at); const subscriptions=data.subscriptions||[]; const cron=data.cron_jobs||[];window.__cronJobs=cron;window.__vpnProfiles=(data.vpn&&data.vpn.profiles)||[]; $('content').innerHTML=`${serverCard(data.server)}${vpnCard(data.vpn,data.vpn_can_copy===true)}<section class="card"><h2>Подключённые сервисы</h2>${(data.services||[]).map(serviceRow).join('')||'<div class="muted">Сервисы не настроены.</div>'}</section>${subscriptions.length?subscriptions.map(subscriptionCard).join(''):'<section class="card"><h2>Подписки</h2><div class="muted">Трекеры подписок не настроены.</div></section>'}<section class="card"><h2>Cron-задачи</h2>${cron.length?cron.map(j=>cronRow(j,data.cron_models||[],data.cron_can_edit===true)).join(''):'<div class="muted">Активных задач нет.</div>'}</section>`;}
 function setRefreshState(active){const b=$('refresh'); if(!b)return; b.disabled=!!active; b.textContent=active?'Обновляю…':'Обновить'; b.setAttribute('aria-busy',active?'true':'false')}
 let statusLoadSequence=0;let statusLoadIdentity=null;
 async function load(refresh=false){
  const sequence=++statusLoadSequence;
  const identity=(tg&&tg.initData)||'';
  const isCurrent=()=>sequence===statusLoadSequence&&((tg&&tg.initData)||'')===identity;
- const clearPrivate=()=>{if(typeof closeCronDelete==='function')closeCronDelete();$('cron-feedback').textContent='';$('cron-feedback').hidden=true;window.__cronJobs=[];$('content').innerHTML='';if($('connected-content'))$('connected-content').innerHTML=''};
+ const clearPrivate=()=>{if(typeof closeVpnLink==='function')closeVpnLink();window.__vpnProfiles=[];if(typeof closeCronDelete==='function')closeCronDelete();$('cron-feedback').textContent='';$('cron-feedback').hidden=true;window.__cronJobs=[];$('content').innerHTML='';if($('connected-content'))$('connected-content').innerHTML=''};
  if(identity!==statusLoadIdentity){clearPrivate();statusLoadIdentity=identity}
  $('error').classList.add('hidden');
  if(refresh)$('verified').textContent='Обновляю данные…';
@@ -1103,6 +1268,7 @@ async function load(refresh=false){
   const data=await r.json();
   if(!isCurrent())return false;
   if(!r.ok)throw new Error((data.detail&&data.detail.message)||JSON.stringify(data));
+  if(data.vpn_can_copy!==true)closeVpnLink();
   render(data);return true;
  }catch(e){
   if(!isCurrent())return false;
@@ -1124,8 +1290,8 @@ def make_handler(context: ServerContext) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         server_version = "HermesOperatorMiniApp/0.1"
 
-        def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
-            data = json.dumps(redact(payload), ensure_ascii=False).encode("utf-8")
+        def _send_json(self, payload: dict[str, Any], status: int = 200, *, private_link: bool = False) -> None:
+            data = json.dumps(payload if private_link else redact(payload), ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("content-type", "application/json; charset=utf-8")
             self.send_header("cache-control", "no-store")
@@ -1166,14 +1332,19 @@ def make_handler(context: ServerContext) -> type[BaseHTTPRequestHandler]:
                     self._send_json({"detail": {"message": "Request body must be an object"}}, 400)
                     return
                 action = str(body.get("action") or "status")
-                if action not in {"status", "cron_update", "cron_delete"}:
+                if action not in {"status", "cron_update", "cron_delete", "vpn_link"}:
                     self._send_json({"detail": {"message": "Unknown action"}}, 400)
                     return
                 telegram = context.config.get("telegram", {})
                 cron_config = context.config.get("cron", {}) or {}
                 mutation = action in {"cron_update", "cron_delete"}
                 action_allowed_users = cron_config.get("edit_allowed_users") if mutation else None
-                user = authenticate_telegram_request(str(body.get("init_data", "")), telegram, allowed_users=action_allowed_users, require_allowlist=mutation)
+                user = authenticate_telegram_request(str(body.get("init_data", "")), telegram, allowed_users=action_allowed_users, require_allowlist=mutation or action == "vpn_link")
+                if action == "vpn_link":
+                    if not vpn_copy_allowed(context.config, int(user["id"])):
+                        raise PermissionError("Нет доступа к ссылке Happ.")
+                    self._send_json(read_vpn_link(context.config, body), private_link=True)
+                    return
                 if mutation:
                     with cron_mutation_lock:
                         result = (delete_cron_job if action == "cron_delete" else edit_cron_job)(context.config, body)
@@ -1182,6 +1353,7 @@ def make_handler(context: ServerContext) -> type[BaseHTTPRequestHandler]:
                     return
                 payload = collect_status(context.config)
                 payload["user"] = user
+                payload["vpn_can_copy"] = vpn_copy_allowed(context.config, int(user["id"]))
                 editors = cron_config.get("edit_allowed_users")
                 if editors is None:
                     editors = telegram.get("allowed_users", [])
