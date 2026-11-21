@@ -62,7 +62,7 @@ with sync_playwright() as pw:
         for width in (320, 390, 1280):
             page.set_viewport_size({'width': width, 'height': 844})
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-            assert page.evaluate('getComputedStyle(document.body).backgroundColor') == 'rgb(247, 249, 252)'
+            assert page.evaluate('getComputedStyle(document.body).backgroundColor') == 'rgb(15, 15, 15)'
             assert page.locator('.vpn-head .pill').evaluate('e=>e.getBoundingClientRect().height') < 35
             assert page.locator('button:visible').evaluate_all('els=>els.every(e=>e.getBoundingClientRect().height>=44)')
             for selector in ('#refresh', '.vpn-profile button', '.tab[aria-selected="true"]'):

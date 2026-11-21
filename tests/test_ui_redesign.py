@@ -12,15 +12,20 @@ sys.modules[spec.name] = app
 spec.loader.exec_module(app)
 
 
-def test_reference_light_palette_and_native_system_typography():
+def test_stavkaposting_dark_palette_and_native_system_typography():
     html = app.MINIAPP_HTML
-    assert '--operator-bg:#f7f9fc' in html
-    assert '--operator-text:#142238' in html
-    assert '--operator-accent:#1971b9' in html
-    assert 'font:14px/1.45 system-ui' in html
+    assert '--operator-bg:#0f0f0f' in html
+    assert '--operator-text:#fff' in html
+    assert '--operator-accent:#6ab3f3' in html
+    assert 'font:14px/1.35 system-ui' in html
     assert 'radial-gradient' not in html
     assert 'linear-gradient' not in html
-    assert 'color-scheme:light' in html
+    assert 'color-scheme:dark' in html
+    assert '--operator-surface:#212121' in html
+    assert 'padding:14px;margin-top:7px' in html
+    assert '.bar{height:5px' in html
+    assert '<header class="top"><div class="brand">H / OPERATOR</div><button id="refresh"' in html
+    assert '<div class="intro"><h1 class="title">Hermes Operator</h1>' in html
 
 
 def test_safe_area_focus_and_mobile_controls():
@@ -44,8 +49,8 @@ def test_action_text_contrast_in_all_button_states():
         linear = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in rgb]
         return sum(v * weight for v, weight in zip(linear, (.2126, .7152, .0722)))
     foreground = luminance(match.group(1))
-    for background in ('#eaf0f6', '#dde8f2', '#d4e0ec'):
-        assert (luminance(background) + .05) / (foreground + .05) >= 4.5
-    for selector in ('#refresh', '.vpn-profile button', '.tab[aria-selected="true"]'):
+    for background in ('#212121', '#292929', '#303030', '#383838'):
+        assert (foreground + .05) / (luminance(background) + .05) >= 4.5
+    for selector in ('.vpn-profile button', '.tab[aria-selected="true"]'):
         rule = re.search(re.escape(selector) + r'\{([^}]+)\}', html)
         assert rule and 'color:var(--operator-action)' in rule.group(1)

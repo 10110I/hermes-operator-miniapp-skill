@@ -17,7 +17,7 @@ It is based on a real Hermes operator panel, but the subscription tracking was r
 
 ## Operator visual style
 
-The interface uses a deliberately light, compact Telegram utility style: cool off-white background, white cards, blue actions, system typography and 12px control radii. Quota bars use a single blue fill; warnings and destructive actions retain distinct semantic colors. It stays light even in a dark Telegram client, matching the chosen reference rather than inheriting unreadable partial theme colors. All existing status, quota, cron and private-link flows remain unchanged.
+The interface follows the owner-selected dark Telegram presentation of @Stavkaposting1bot: near-black #0f0f0f canvas, flat #212121 cards without outlines, restrained light-blue accents, system typography, 12px control radii and compact 7px card gaps. The header pairs a small tracked brand with the refresh action, followed by a 28px title. Quota bars stay thin and inline rather than adding nested pale panels. It remains dark in light and dark clients; missing data, warnings, permissions and all existing status, quota, cron and private-link flows remain unchanged. The previous light interpretation was rejected and is not the visual contract.
 
 The layout is capped at 600px, supports 320px screens, respects Telegram/device safe areas, keeps controls at least 44px high and provides visible keyboard focus. Connected-user and cleanup elements in customized installations share the same tokens without requiring any server-side behavior replacement. Deploy UI-only edits selectively; never overwrite a customized runtime with a clean package script.
 
