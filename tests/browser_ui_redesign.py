@@ -28,6 +28,15 @@ fixture = {
     'vpn_can_copy': True, 'cron_jobs': [{'id': 'test', 'name': 'Тестовая задача с длинным названием', 'state': 'active', 'schedule_kind': 'interval', 'schedule_display': 'каждые 30 минут', 'schedule_minutes': 30, 'periodicity_index': 5, 'reasoning_index': 4}],
     'cron_can_edit': True, 'cron_models': [{'value': 'default', 'label': 'По умолчанию'}]
 }
+def assert_contrast(locator):
+    ratio = locator.evaluate('''e=>{
+        const s=getComputedStyle(e);
+        const L=color=>{const values=color.match(/[\\d.]+/g).slice(0,3).map(Number).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return values.reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0)};
+        const a=L(s.color),b=L(s.backgroundColor);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+    }''')
+    assert ratio >= 4.5, ratio
+
+
 mutations = []
 with sync_playwright() as pw:
     browser = pw.chromium.launch(headless=True, args=['--no-sandbox'])
@@ -56,6 +65,20 @@ with sync_playwright() as pw:
             assert page.evaluate('getComputedStyle(document.body).backgroundColor') == 'rgb(247, 249, 252)'
             assert page.locator('.vpn-head .pill').evaluate('e=>e.getBoundingClientRect().height') < 35
             assert page.locator('button:visible').evaluate_all('els=>els.every(e=>e.getBoundingClientRect().height>=44)')
+            for selector in ('#refresh', '.vpn-profile button', '.tab[aria-selected="true"]'):
+                action = page.locator(selector)
+                if not action.count():
+                    continue
+                page.mouse.move(0, 0)
+                assert_contrast(action)
+                action.hover()
+                assert_contrast(action)
+                page.mouse.down()
+                try:
+                    assert_contrast(action)
+                finally:
+                    page.mouse.move(0, 0)
+                    page.mouse.up()
             editor = page.locator('[data-cron-editor]')
             editor.locator('summary').click()
             expect(editor.locator('select')).to_be_visible()

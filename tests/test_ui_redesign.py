@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import sys
+import re
 
 SCRIPT = Path(__file__).parents[1] / 'scripts/operator_miniapp_status.py'
 spec = importlib.util.spec_from_file_location('operator_redesign_contract', SCRIPT)
@@ -32,3 +33,19 @@ def test_safe_area_focus_and_mobile_controls():
     assert '<div class="brand">H / OPERATOR</div>' in html
     for marker in ('id="refresh"', 'data-cron-save', 'data-cron-delete', 'id="vpn-link-dialog"'):
         assert marker in html
+
+
+def test_action_text_contrast_in_all_button_states():
+    html = app.MINIAPP_HTML
+    match = re.search(r'--operator-action:(#[0-9a-f]{6})', html)
+    assert match, 'Action text needs its own high-contrast token'
+    def luminance(color):
+        rgb = [int(color[i:i+2], 16) / 255 for i in (1, 3, 5)]
+        linear = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in rgb]
+        return sum(v * weight for v, weight in zip(linear, (.2126, .7152, .0722)))
+    foreground = luminance(match.group(1))
+    for background in ('#eaf0f6', '#dde8f2', '#d4e0ec'):
+        assert (luminance(background) + .05) / (foreground + .05) >= 4.5
+    for selector in ('#refresh', '.vpn-profile button', '.tab[aria-selected="true"]'):
+        rule = re.search(re.escape(selector) + r'\{([^}]+)\}', html)
+        assert rule and 'color:var(--operator-action)' in rule.group(1)
