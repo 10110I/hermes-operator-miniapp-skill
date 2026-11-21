@@ -15,6 +15,14 @@ Cron writes are authenticated separately with `cron.edit_allowed_users` (inherit
 
 It is based on a real Hermes operator panel, but the subscription tracking was redesigned so users are not locked to one provider such as `openai-codex`.
 
+## Operator visual style
+
+The interface uses a deliberately light, compact Telegram utility style: cool off-white background, white cards, blue actions, system typography and 12px control radii. Quota bars use a single blue fill; warnings and destructive actions retain distinct semantic colors. It stays light even in a dark Telegram client, matching the chosen reference rather than inheriting unreadable partial theme colors. All existing status, quota, cron and private-link flows remain unchanged.
+
+The layout is capped at 600px, supports 320px screens, respects Telegram/device safe areas, keeps controls at least 44px high and provides visible keyboard focus. Connected-user and cleanup elements in customized installations share the same tokens without requiring any server-side behavior replacement. Deploy UI-only edits selectively; never overwrite a customized runtime with a clean package script.
+
+Presentation checks: `pytest -q tests/test_ui_redesign.py`; browser: `python tests/browser_ui_redesign.py scripts/operator_miniapp_status.py` (requires Playwright Chromium). Existing `browser_server_vpn.py` and `browser_cron_editor.py` remain behavioral regression gates.
+
 ## Install paths
 
 There are two supported public install paths today:
