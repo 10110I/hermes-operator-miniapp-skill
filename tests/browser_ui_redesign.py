@@ -8,6 +8,10 @@ from pathlib import Path
 import sys
 from playwright.sync_api import sync_playwright, expect
 
+def reveal(locator):
+    locator.wait_for(state="attached")
+    locator.evaluate("e=>{const chain=[];for(let d=e.parentElement.closest('details');d;d=d.parentElement.closest('details'))chain.unshift(d);chain.forEach(d=>d.open=true)}")
+
 script = Path(sys.argv[1]).resolve()
 spec = importlib.util.spec_from_file_location('operator_ui_browser', script)
 assert spec is not None and spec.loader is not None
@@ -57,18 +61,21 @@ with sync_playwright() as pw:
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.goto('https://operator.example.invalid/miniapp')
+        reveal(page.locator('#server-status'))
         expect(page.locator('#server-status')).to_be_visible()
         expect(page.locator('#verified')).to_contain_text('verified')
         for width in (320, 390, 1280):
             page.set_viewport_size({'width': width, 'height': 844})
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert page.evaluate('getComputedStyle(document.body).backgroundColor') == 'rgb(15, 15, 15)'
+            reveal(page.locator('#vpn-status'))
             assert page.locator('.vpn-head .pill').evaluate('e=>e.getBoundingClientRect().height') < 35
             assert page.locator('button:visible').evaluate_all('els=>els.every(e=>e.getBoundingClientRect().height>=44)')
             for selector in ('#refresh', '.vpn-profile button', '.tab[aria-selected="true"]'):
                 action = page.locator(selector)
                 if not action.count():
                     continue
+                reveal(action)
                 page.mouse.move(0, 0)
                 assert_contrast(action)
                 action.hover()
@@ -80,6 +87,7 @@ with sync_playwright() as pw:
                     page.mouse.move(0, 0)
                     page.mouse.up()
             editor = page.locator('[data-cron-editor]')
+            reveal(editor)
             editor.locator('summary').click()
             expect(editor.locator('select')).to_be_visible()
             assert editor.locator('select').evaluate('e=>e.getBoundingClientRect().right<=innerWidth')

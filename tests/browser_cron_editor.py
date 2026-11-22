@@ -20,6 +20,15 @@ from urllib.request import urlopen
 
 from playwright.sync_api import sync_playwright, expect
 
+def open_editor(editor):
+    reveal(editor)
+    if not editor.evaluate('e=>e.open'):
+        editor.locator('summary').click()
+
+def reveal(locator):
+    locator.wait_for(state="attached")
+    locator.evaluate("e=>{const chain=[];for(let d=e.parentElement.closest('details');d;d=d.parentElement.closest('details'))chain.unshift(d);chain.forEach(d=>d.open=true)}")
+
 SCRIPT = Path(sys.argv[1]).resolve()
 TOKEN = '123456:TEST_TOKEN'
 OUT = Path(os.environ.get('OPERATOR_BROWSER_OUTPUT', '/tmp/operator-cron-browser'))
@@ -90,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
                 print('initial load diagnostics', errors, page.locator('#errtext').inner_text(), (home / 'server.log').read_text()[-3000:], flush=True)
                 raise
             print('initial signed browser load passed', flush=True)
-            editor.locator('summary').click()
+            open_editor(editor)
             expect(editor.locator('[data-reasoning-value]')).to_have_text('medium')
             choices = editor.locator('[data-model] option').evaluate_all('(els)=>els.map(el=>el.value)')
             target_choice = next(value for value in choices if value != 'default' and json.loads(value)[1] != 'gpt-6.1-sol')
@@ -124,7 +133,7 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             assert saved['schedule']['kind'] == 'interval' and saved['schedule']['minutes'] == 60
             page.reload()
             expect(editor).to_be_attached(timeout=90000)
-            editor.locator('summary').click()
+            open_editor(editor)
             expect(editor.locator('[data-model]')).to_have_value(target_choice)
             expect(editor.locator('[data-reasoning]')).to_have_value('5')
             expect(editor.locator('[data-periodicity]')).to_have_value('6')
@@ -149,11 +158,11 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             assert saved['schedule']['minutes'] == 60
             once_id = records()[2]['id']
             once = page.locator(f'[data-cron-editor][data-job-id="{once_id}"]')
-            once.locator('summary').click()
+            open_editor(once)
             expect(once.locator('[data-periodicity]')).to_be_disabled()
             # Calendar conversion requires confirmation; cancelling causes no write.
             calendar = page.locator(f'[data-cron-editor][data-job-id="{records()[1]["id"]}"]')
-            calendar.locator('summary').click()
+            open_editor(calendar)
             calendar.locator('[data-periodicity]').evaluate('(el)=>{el.value="6";el.dispatchEvent(new Event("input",{bubbles:true}))}')
             dialogs = []
             page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
@@ -162,7 +171,7 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             # A model-only pin must survive changing reasoning without selecting a model.
             partial_id = records()[3]['id']
             partial = page.locator(f'[data-cron-editor][data-job-id="{partial_id}"]')
-            partial.locator('summary').click()
+            open_editor(partial)
             expect(partial.locator('[data-model]')).to_have_value('["","gpt-6.1-sol"]')
             partial.locator('[data-reasoning]').evaluate('(el)=>{el.value="5";el.dispatchEvent(new Event("input",{bubbles:true}))}')
             partial.locator('[data-cron-save]').click()
@@ -178,7 +187,7 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
                 else:
                     route.continue_()
             page.route('**/api/status', fail_update)
-            editor.locator('summary').click() if not editor.evaluate('(el)=>el.open') else None
+            open_editor(editor)
             editor.locator('[data-cron-save]').click()
             expect(editor.locator('[data-cron-message]')).to_have_text('Тестовая ошибка сохранения')
             expect(editor.locator('[data-cron-save]')).to_be_enabled()
@@ -189,7 +198,7 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             remove = page.locator(f'[data-cron-delete][data-job-id="{job_id}"]')
             popup = page.locator('#cron-delete-dialog')
             page.set_viewport_size({'width': 390, 'height': 844})
-            remove.click()
+            reveal(remove); remove.click()
             expect(popup).to_be_visible()
             expect(popup.locator('#cron-delete-title')).to_have_text('Вы уверены что хотите удалить')
             expect(popup.locator('#cron-delete-name')).to_have_text(before_delete[0]['name'])
@@ -204,7 +213,7 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             page.keyboard.press('Escape')
             expect(popup).not_to_be_visible()
             assert not deletions and records() == before_delete
-            remove.click()
+            reveal(remove); remove.click()
             popup.locator('#cron-delete-cancel').click()
             expect(popup).not_to_be_visible()
             assert not deletions and records() == before_delete
@@ -214,14 +223,14 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
                 else:
                     route.continue_()
             page.route('**/api/status', fail_delete)
-            remove.click()
+            reveal(remove); remove.click()
             popup.locator('#cron-delete-confirm').click()
             expect(popup.locator('#cron-delete-error')).to_have_text('Тестовая ошибка удаления')
             expect(popup.locator('#cron-delete-confirm')).to_be_enabled()
             assert records() == before_delete and len(deletions) == 1
             popup.locator('#cron-delete-cancel').click()
             page.unroute('**/api/status', fail_delete)
-            remove.click()
+            reveal(remove); remove.click()
             page.evaluate("()=>{const button=document.getElementById('cron-delete-confirm');button.click();button.click()}")
             expect(popup).not_to_be_visible(timeout=90000)
             expect(page.locator('#cron-feedback')).to_have_text('Задача удалена.')
@@ -248,7 +257,7 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
             assert len(records()) == len(before_delete) - 1
             viewer.close()
             # Same WebView, identity revoked/switched: no previous account data survives.
-            page.locator(f'[data-cron-delete][data-job-id="{once_id}"]').click()
+            reveal(page.locator(f'[data-cron-delete][data-job-id="{once_id}"]')); page.locator(f'[data-cron-delete][data-job-id="{once_id}"]').click()
             expect(popup).to_be_visible()
             page.evaluate('(data)=>{window.Telegram.WebApp.initData=data;load(true)}', signed(303))
             expect(page.locator('#error')).to_be_visible(timeout=90000)
@@ -270,7 +279,7 @@ with tempfile.TemporaryDirectory(prefix='operator-cron-e2e-') as tmp:
                 else:
                     route.continue_()
             page.route('**/api/status', hold_delete)
-            page.locator(f'[data-cron-delete][data-job-id="{once_id}"]').click()
+            reveal(page.locator(f'[data-cron-delete][data-job-id="{once_id}"]')); page.locator(f'[data-cron-delete][data-job-id="{once_id}"]').click()
             popup.locator('#cron-delete-confirm').click()
             expect(popup.locator('#cron-delete-confirm')).to_be_disabled()
             page.evaluate('(data)=>{window.Telegram.WebApp.initData=data;load(true)}', signed(303))

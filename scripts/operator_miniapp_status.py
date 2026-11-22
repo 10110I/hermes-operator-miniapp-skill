@@ -1121,6 +1121,9 @@ button:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visi
 [hidden],.hidden{display:none!important}pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;color:#ff9da4;font-size:12px}.footer{margin-top:22px;padding-top:12px;border-top:1px solid var(--operator-border);color:var(--operator-muted);font-size:11px;line-height:1.5}
 @media(max-width:360px){.title{font-size:26px}.card{padding:12px}.pill{max-width:105px}.remote-title{gap:8px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+/* Compact disclosure hierarchy: overview → provider/job → detail. */
+.compact-fold{min-width:0}.section-fold{padding:0}.fold-summary{display:flex;align-items:center;gap:10px;min-height:64px;padding:12px 14px;cursor:pointer;list-style:none;user-select:none}.fold-summary::-webkit-details-marker{display:none}.fold-summary::marker{content:''}.fold-text{min-width:0;flex:1}.fold-title{display:block;font-size:14px;font-weight:650;line-height:1.4;overflow-wrap:anywhere}.fold-caption{display:block;font-size:11px;line-height:1.5;color:var(--operator-muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fold-chevron{flex:none;font-size:23px;line-height:1;color:var(--operator-accent)}.compact-fold[open]>.fold-summary>.fold-chevron{transform:rotate(90deg)}.fold-summary:focus-visible{outline:2px solid var(--operator-accent);outline-offset:-3px;border-radius:12px}.fold-summary:hover{background:#ffffff05;border-radius:12px}.fold-summary>.pill,.fold-summary>.status-badge{max-width:105px;font-size:10px}.fold-body{padding:0 14px 14px}.fold-body>.card{background:transparent;padding:0;margin:0;border:0;box-shadow:none}.fold-body>.card>h2,.fold-body>.card>.remote-title{display:none}.nested-fold{border-top:1px solid var(--operator-border)}.nested-fold>.fold-summary{min-height:58px;padding:10px 0}.nested-fold>.fold-body{padding:0 0 12px}.nested-fold .fold-title{font-size:13px}.nested-fold .fold-caption{font-size:11px}.fold-body>.account{border:0;padding:0}.fold-body>.account .account-head .name,.fold-body>.account .account-meta .status-badge{display:none}.fold-body>.account .account-meta{margin-top:0}.fold-body>.cron-job{border:0;padding:0;margin:0}.fold-body>.cron-job>.row{padding:0 0 10px;border:0}.fold-body>.cron-job>.row .name,.fold-body>.cron-job>.row>.pill{display:none}.section-fold[open]>.fold-summary{margin-bottom:2px}.compact-fold:not([open])>.fold-body{display:none}.remote-section:first-of-type{margin-top:0;padding-top:0;border:0}.intro{margin-bottom:12px}.title{margin-top:18px}.footer{margin-top:16px}
+.fold-warning .fold-caption{color:#ffd27f}.compact-list{max-height:min(50vh,380px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#4a4a4a transparent}.compact-list:focus-visible{outline:2px solid var(--operator-accent);outline-offset:2px}.nested-fold[data-fold-group="providers"]>.fold-body{padding-left:12px;border-left:1px solid var(--operator-border);margin-left:2px}.fold-body>.card>.caption{padding-bottom:10px;margin-top:0}
 </style></head>
 <body><main class="wrap"><header class="top"><div class="brand">H / OPERATOR</div><button id="refresh" type="button">Обновить</button></header><div class="intro"><h1 class="title">Hermes Operator</h1><div class="muted small">Сервисы, подписки и задачи</div><div id="verified" class="eyebrow" role="status">Проверяю Telegram…</div></div><p id="cron-feedback" class="muted small" role="status" hidden></p><div id="error" class="card hidden"><b>Ошибка доступа</b><pre id="errtext"></pre></div><div id="content"><div class="card muted">Загружаю…</div></div><div class="footer">Данные без токенов и секретов</div></main>
 <dialog id="cron-delete-dialog" class="cron-delete-dialog" aria-labelledby="cron-delete-title" aria-describedby="cron-delete-name">
@@ -1297,6 +1300,97 @@ async function load(refresh=false){
  }finally{if(isCurrent())setRefreshState(false)}
 }
 $('refresh').addEventListener('click',(event)=>{event.preventDefault(); load(true)}); load(false);
+</script><script>
+/* Presentation-only progressive disclosure. No requests or persisted state. */
+(()=>{
+ const node=(tag,cls,text)=>{const el=document.createElement(tag);if(cls)el.className=cls;if(text!=null)el.textContent=text;return el};
+ const text=(el,selector)=>el.querySelector(selector)?.textContent.trim()||'';
+ function fold(element,{key,title,caption='',badge=null,group='',root=false,warning=false}){
+  const details=node('details',`compact-fold ${root?'card section-fold':'nested-fold'}`);
+  details.dataset.foldKey=key;
+  if(group){details.dataset.foldGroup=group;details.setAttribute('name','operator-'+group)}
+  const summary=node('summary','fold-summary');summary.classList.toggle('fold-warning',warning);
+  const labels=node('span','fold-text');labels.append(node('span','fold-title',title));
+  const sub=node('span','fold-caption',caption);labels.append(sub);summary.append(labels);
+  if(badge)summary.append(badge.cloneNode(true));
+  const arrow=node('span','fold-chevron','›');arrow.setAttribute('aria-hidden','true');summary.append(arrow);
+  const body=node('div','fold-body');
+  if(element.parentNode)element.before(details);
+  body.append(element);details.append(summary,body);return details;
+ }
+ function attention(items){return items.filter(x=>!['ok','active','available','connected','running'].includes(String(x.status||'unknown').toLowerCase())).length}
+ function countCaption(items,label,n=attention(items)){return `${label}: ${items.length}${n?' · требуют внимания: '+n:''}`}
+ function attentionCount(s){return Number.isInteger(s.attention_accounts)&&s.attention_accounts>=0?s.attention_accounts:attention(s.accounts||[])}
+ function listFor(elements,label){const list=node('div','compact-list');list.setAttribute('role','region');list.setAttribute('aria-label',label);if(elements.length>6)list.tabIndex=0;if(elements.length)elements[0].before(list);elements.forEach(el=>list.append(el));return list}
+ function diskCaption(){const card=document.getElementById('server-status');if(!card)return '';const free=text(card,'.server-disk-details span:nth-child(2)');const used=text(card,'.server-disk-head span:last-child');return free?`${free}${used?' · занято '+used:''}`:'Данные диска недоступны'}
+ function syncDiskSummary(){
+  const card=document.getElementById('server-status'),box=card?.closest('[data-fold-key="server"]');
+  if(!box)return;
+  const caption=box.querySelector(':scope > summary .fold-caption');
+  const value=(card.querySelector('.server-warning')?'Мало места · ':'')+diskCaption();
+  if(caption.textContent!==value)caption.textContent=value;
+  box.querySelector(':scope > summary').classList.toggle('fold-warning',!!card.querySelector('.server-warning'));
+ }
+ function nestAccounts(card,subscription,index){
+  const accounts=[...card.querySelectorAll('.account')];listFor(accounts,'Аккаунты провайдера');
+  accounts.forEach((account,j)=>{
+   const a=(subscription.accounts||[])[j]||{};
+   const windows=(a.windows||[]).slice(0,2).map(w=>typeof w.remaining_percent==='number'&&Number.isFinite(w.remaining_percent)?`${w.label||'Лимит'}: ${Math.round(w.remaining_percent)}% осталось`:null).filter(Boolean);
+   fold(account,{key:`account:${index}:${a.id||a.label||j}`,title:text(account,'.name')||'Аккаунт',caption:[a.plan,...windows].filter(Boolean).join(' · '),badge:account.querySelector('.status-badge'),group:`accounts:${index}`});
+  });
+ }
+ const originalRender=render;
+ render=function(data){
+  // Existing loader clears private DOM on identity changes/errors. Open state
+  // is read only from that DOM, so it cannot survive an account boundary.
+  const opened=new Set([...document.querySelectorAll('.compact-fold[open], [data-cron-editor][open]')].map(el=>el.dataset.foldKey||'editor:'+el.dataset.jobId));
+  originalRender(data);
+  const content=document.getElementById('content');
+  const sections=[...content.children].filter(el=>el.tagName==='SECTION');
+  const server=content.querySelector('#server-status');
+  if(server)fold(server,{key:'server',title:'Сервер',caption:diskCaption(),group:'overview',root:true});
+  const vpn=content.querySelector('#vpn-status');
+  if(vpn)fold(vpn,{key:'vpn',title:'VPN',caption:countCaption(data.vpn?.profiles||[],'Профили'),warning:attention(data.vpn?.profiles||[])>0,group:'overview',root:true});
+  const services=sections.find(el=>text(el,'h2')==='Подключённые сервисы');
+  if(services)fold(services,{key:'services',title:'Сервисы',caption:countCaption(data.services||[],'Подключения'),warning:attention(data.services||[])>0,group:'overview',root:true});
+  const cron=sections.find(el=>text(el,'h2')==='Cron-задачи');
+  const subscriptions=sections.filter(el=>el!==server&&el!==vpn&&el!==services&&el!==cron);
+  if(subscriptions.length){
+   const holder=node('div','subscription-list');subscriptions[0].before(holder);
+   const accounts=(data.subscriptions||[]).flatMap(s=>s.accounts||[]);
+   const n=(data.subscriptions||[]).reduce((total,s)=>total+attentionCount(s),0);
+   fold(holder,{key:'subscriptions',title:'Подписки',caption:countCaption(accounts,'Аккаунты',n),warning:n>0,group:'overview',root:true});
+   subscriptions.forEach((card,i)=>{
+    const s=(data.subscriptions||[])[i];holder.append(card);
+    if(s){const key=s.id||s.label||i;nestAccounts(card,s,key);fold(card,{key:'provider:'+key,title:s.label||s.id||'Подписка',caption:typeof s.available_accounts==='number'?`Доступно: ${s.available_accounts} из ${(s.accounts||[]).length}${attentionCount(s)?' · внимание: '+attentionCount(s):''}`:countCaption(s.accounts||[],'Аккаунты',attentionCount(s)),warning:attentionCount(s)>0,group:'providers'})}
+   });
+  }
+  if(cron){
+   const jobs=[...cron.querySelectorAll('.cron-job')];listFor(jobs,'Список задач');
+   jobs.forEach((job,i)=>{
+    const j=(data.cron_jobs||[])[i]||{};
+    fold(job,{key:'job:'+j.id,title:j.name||j.id||'Задача',caption:j.schedule_display||j.schedule||'Без расписания',badge:job.querySelector('.row > .pill'),group:'jobs'});
+   });
+   fold(cron,{key:'cron',title:'Задачи',caption:`Всего: ${(data.cron_jobs||[]).length}`,group:'overview',root:true});
+  }
+  const connected=document.getElementById('connected-content');
+  if(connected)[...connected.children].forEach((card,i)=>{
+   const u=(data.connected_users||[])[i];if(!u)return;
+   const caption=card.querySelector('.remote-section .caption')?.textContent|| (u.status==='unavailable'?'Диагностика недоступна':'Сервер и профиль');
+   fold(card,{key:'remote:'+(u.id||u.label||i),title:u.label||'Подключение',caption:(u.profile?.stale?'Данные устарели · ':'')+caption,badge:card.querySelector('.remote-title .pill'),warning:u.profile?.stale||u.status!=='ok',group:'peers',root:true});
+  });
+  document.querySelectorAll('.compact-fold,[data-cron-editor]').forEach(el=>{const key=el.dataset.foldKey||'editor:'+el.dataset.jobId;if(opened.has(key))el.open=true});
+  syncDiskSummary();
+ };
+ // Native exclusive details names have this fallback for older WebViews.
+ document.addEventListener('toggle',event=>{
+  const item=event.target;if(!item.matches?.('.compact-fold[open]')||!item.dataset.foldGroup)return;
+  [...item.parentElement.children].forEach(other=>{if(other!==item&&other.dataset.foldGroup===item.dataset.foldGroup)other.open=false});
+ },true);
+ // Cleanup replaces only its inner server card; keep the compact summary live.
+ const originalServerCard=serverCard;
+ serverCard=function(...args){const html=originalServerCard(...args);queueMicrotask(syncDiskSummary);return html};
+})();
 </script></body></html>"""
 
 
