@@ -16,6 +16,10 @@ from urllib.parse import urlencode
 
 from playwright.sync_api import sync_playwright, expect
 
+def reveal(locator):
+    locator.wait_for(state="attached")
+    locator.evaluate("e=>{const chain=[];for(let d=e.parentElement.closest('details');d;d=d.parentElement.closest('details'))chain.unshift(d);chain.forEach(d=>d.open=true)}")
+
 SCRIPT = Path(sys.argv[1]).resolve()
 spec = importlib.util.spec_from_file_location("operator_vpn_browser", SCRIPT)
 app = importlib.util.module_from_spec(spec)
@@ -58,6 +62,7 @@ with tempfile.TemporaryDirectory(prefix="operator-vpn-browser-") as tmp:
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(url + "/miniapp")
+            reveal(page.locator("#server-status"))
             expect(page.locator("#server-status")).to_be_visible(timeout=15000)
             expect(page.locator("#server-status")).to_contain_text("Мало свободного места")
             expect(page.locator("#vpn-status")).to_contain_text("Работает")
@@ -72,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix="operator-vpn-browser-") as tmp:
                 page.set_viewport_size({"width": width, "height": 844})
                 assert page.evaluate("document.documentElement.scrollWidth<=innerWidth")
                 page.screenshot(path=str(OUT / (SCRIPT.parent.parent.name + f"-cards-{width}.png")))
-                page.locator("[data-vpn-link]").click()
+                reveal(page.locator("[data-vpn-link]")); page.locator("[data-vpn-link]").click()
                 expect(modal).to_be_visible()
                 expect(page.locator("#vpn-link-value")).to_have_value(URI)
                 expect(page.locator("#vpn-link-close")).to_be_focused()
@@ -84,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix="operator-vpn-browser-") as tmp:
                 expect(modal).not_to_be_visible()
                 assert page.locator("#vpn-link-value").input_value() == ""
             # Real Chromium clipboard, initiated by a second user gesture (mobile-safe).
-            page.locator("[data-vpn-link]").click()
+            reveal(page.locator("[data-vpn-link]")); page.locator("[data-vpn-link]").click()
             expect(page.locator("#vpn-link-copy")).to_be_enabled()
             page.locator("#vpn-link-copy").click()
             expect(page.locator("#vpn-link-message")).to_contain_text("Ссылка скопирована")
@@ -104,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix="operator-vpn-browser-") as tmp:
             for delayed in (False, True):
                 config["vpn"]["link_allowed_users"] = [101]
                 assert page.evaluate("load(true)") is True
-                expect(page.locator("[data-vpn-link]")).to_be_visible()
+                reveal(page.locator("[data-vpn-link]")); expect(page.locator("[data-vpn-link]")).to_be_visible()
                 delayed_routes = []
                 def delay_link(route):
                     delayed_routes.append(route)
@@ -142,7 +147,7 @@ with tempfile.TemporaryDirectory(prefix="operator-vpn-browser-") as tmp:
             assert denied.status == 403 and URI not in denied.text()
             # A delayed reply cannot repopulate a modal after revocation.
             page.evaluate("data=>{window.Telegram.WebApp.initData=data;load(true)}", signed(101))
-            expect(page.locator("[data-vpn-link]")).to_be_visible()
+            reveal(page.locator("[data-vpn-link]")); expect(page.locator("[data-vpn-link]")).to_be_visible()
             held = []
             def hold(route):
                 if route.request.post_data_json.get("action") == "vpn_link":
@@ -150,7 +155,7 @@ with tempfile.TemporaryDirectory(prefix="operator-vpn-browser-") as tmp:
                 else:
                     route.continue_()
             page.route("**/api/status", hold)
-            page.locator("[data-vpn-link]").click()
+            reveal(page.locator("[data-vpn-link]")); page.locator("[data-vpn-link]").click()
             expect(modal).to_be_visible()
             expect(page.locator("#vpn-link-copy")).to_be_disabled()
             page.evaluate("data=>{window.Telegram.WebApp.initData=data;load(true)}", signed(303))

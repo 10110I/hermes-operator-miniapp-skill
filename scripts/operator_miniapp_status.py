@@ -1094,14 +1094,41 @@ def collect_status(config: dict[str, Any]) -> dict[str, Any]:
 # Mini App UI server
 
 MINIAPP_HTML = """<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<html lang="ru"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>Hermes Operator Status</title><style>
-:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#08111f;color:#eef6ff}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#155e7566,#08111f 46%,#020617)}.wrap{max-width:640px;margin:0 auto;padding:18px 14px 42px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.eyebrow{font-size:12px;color:#93c5fd}.title{margin:2px 0 0;font-size:28px;letter-spacing:-.04em}.muted{color:#94a3b8}.small{font-size:12px}.card{border:1px solid #ffffff18;border-radius:24px;background:#0b1220d9;padding:15px;margin-top:12px;box-shadow:0 12px 34px #0005}.card h2{font-size:17px;margin:0 0 12px}.row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #ffffff10}.row:first-of-type{border-top:0}.name{font-weight:750}.caption{font-size:12px;color:#94a3b8;margin-top:3px}.pill{font-size:11px;text-transform:uppercase;border-radius:999px;border:1px solid #ffffff24;padding:5px 8px;background:#ffffff10;white-space:nowrap}.ok{color:#86efac}.error,.reauth{color:#fca5a5}.limited,.unknown{color:#fde68a}.missing{color:#cbd5e1}.account{display:block;padding:13px 0;border-top:1px solid #ffffff10}.account:first-of-type{border-top:0}.account-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.account-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px}.account-meta .caption{margin-top:0}.status-badge{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-radius:999px;border:1px solid #ffffff24;padding:3px 7px;background:#ffffff0d;white-space:nowrap}.bars{display:grid;gap:8px;margin-top:10px}.barline{display:grid;gap:6px;padding:9px;border-radius:14px;background:#ffffff08;border:1px solid #ffffff0d}.limit-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}.limit-title{font-size:12px;font-weight:800;color:#e2e8f0}.limit-stats{font-size:12px;color:#94a3b8}.limit-stats strong{color:#e2e8f0}.limit-note{margin-top:0}.bar{height:9px;background:#ffffff14;border-radius:999px;overflow:hidden}.fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#eab308,#ef4444)}button{border:0;border-radius:999px;padding:10px 14px;background:#38bdf8;color:#04111f;font-weight:800}button:disabled{opacity:.72;cursor:progress}.hidden{display:none}pre{white-space:pre-wrap;word-break:break-word;color:#fecaca}.footer{margin-top:14px;text-align:center;color:#64748b;font-size:11px}</style><style>
-.cron-job{border-top:1px solid #ffffff12;padding-top:10px;margin-top:10px}.cron-job:first-of-type{border-top:0;margin-top:0;padding-top:0}.cron-editor{margin-top:6px;border:1px solid #ffffff16;border-radius:14px;background:#ffffff06}.cron-editor summary{padding:10px 12px;cursor:pointer;font-size:13px;font-weight:700;color:#7dd3fc}.cron-fields{display:grid;gap:12px;padding:0 12px 12px}.cron-field{display:grid;gap:6px;font-size:13px}.cron-field select{width:100%;min-height:40px;border-radius:10px;border:1px solid #ffffff22;background:#111c2d;color:#eef6ff;padding:8px}.cron-range{width:100%;accent-color:#22d3ee;touch-action:pan-y}.cron-range:disabled{opacity:.42}.cron-value{color:#a5f3fc;font-weight:750}.cron-hint{font-size:11px;color:#94a3b8;line-height:1.4}.cron-save{justify-self:start;border:0;border-radius:10px;background:#0e7490;color:#ecfeff;font-weight:750;padding:10px 14px}.cron-save:disabled{opacity:.55}.cron-message{font-size:12px;color:#86efac;min-height:16px}.cron-message.error{color:#fca5a5}
-.cron-delete{background:#541c27;color:#fecdd3;border:1px solid #f8717166;min-height:44px}.cron-delete:hover{background:#702030}.cron-delete-action{margin-top:10px}.cron-delete-dialog{color:#eef6ff;background:#102137;border:1px solid #ffffff24;border-radius:18px;padding:22px;width:calc(100% - 32px);max-width:420px;max-height:calc(100dvh - 32px);overflow:auto;box-shadow:0 20px 80px #0009}.cron-delete-dialog::backdrop{background:#020617bd;backdrop-filter:blur(3px)}.cron-delete-dialog h2{margin:0 0 14px;font-size:21px;line-height:1.3}.cron-delete-dialog p{overflow-wrap:anywhere;line-height:1.5}.cron-delete-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}.cron-delete-actions button{flex:1;min-height:44px}.cron-delete-dialog button:disabled{opacity:.55;cursor:wait}
-#server-status .bar i{display:block;height:100%;background:#38bdf8;border-radius:inherit}.server-disk-head,.vpn-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.server-disk-head{font-weight:700;margin:8px 0}.server-disk-details{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:9px;font-size:13px}.server-warning{margin-top:10px;padding:9px 11px;border-radius:10px;background:#ef44441a;color:#fca5a5;font-size:13px}.vpn-profile{padding:13px 0;border-bottom:1px solid #ffffff12}.vpn-profile:last-of-type{border:0}.vpn-head .name{overflow-wrap:anywhere}.vpn-profile button{margin-top:10px;min-height:44px}.vpn-dialog{color:#eef6ff;background:#102137;border:1px solid #ffffff24;border-radius:18px;padding:20px;width:calc(100% - 32px);max-width:460px;max-height:calc(100dvh - 32px);overflow:auto;box-shadow:0 20px 80px #0009}.vpn-dialog::backdrop{background:#020617bd;backdrop-filter:blur(3px)}.vpn-dialog h2{margin:0 0 10px;font-size:22px}.vpn-dialog textarea{display:block;width:100%;min-height:116px;resize:vertical;background:#08111f;color:#eef6ff;border:1px solid #ffffff30;border-radius:10px;padding:10px;font:12px/1.5 ui-monospace,monospace;overflow-wrap:anywhere;margin:8px 0}.vpn-dialog textarea[hidden]{display:none}.vpn-dialog-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.vpn-dialog-actions button{flex:1;min-height:44px}.vpn-dialog button:disabled{opacity:.5}.vpn-note{line-height:1.5;margin-top:10px}
+:root{color-scheme:dark;--operator-bg:#0f0f0f;--operator-text:#fff;--operator-muted:#aaa;--operator-accent:#6ab3f3;--operator-action:#6ab3f3;--operator-primary:#5288c1;--operator-surface:#212121;--operator-soft:#292929;--operator-border:#383838;background:var(--operator-bg);color:var(--operator-text);font:14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--operator-bg)}
+.wrap{width:100%;max-width:600px;margin:0 auto;padding:max(18px,var(--tg-content-safe-area-inset-top,0px),env(safe-area-inset-top,0px)) 14px max(24px,var(--tg-content-safe-area-inset-bottom,0px),env(safe-area-inset-bottom,0px))}
+.top{display:flex;align-items:center;justify-content:space-between;gap:8px}.brand{font-size:11px;font-weight:800;letter-spacing:2px;color:var(--operator-accent)}
+.title{margin:24px 0 5px;font-size:28px;line-height:1.15;letter-spacing:-.7px;font-weight:700;overflow-wrap:anywhere}.intro{margin-bottom:16px}.intro>.muted{font-size:14px;color:var(--operator-text);line-height:1.45}.eyebrow{font-size:11px;line-height:1.5;color:var(--operator-muted);margin-top:6px;overflow-wrap:anywhere}
+.muted,.caption,.small{color:var(--operator-muted)}.small{font-size:12px}.caption{font-size:12px;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}
+button{font:inherit;color:var(--operator-text);border:0;border-radius:12px;background:var(--operator-surface);padding:10px;min-height:44px;cursor:pointer;line-height:1.35;overflow-wrap:anywhere}button:hover:not(:disabled){background:#303030}button:active:not(:disabled){background:#383838}button:disabled{opacity:.6;cursor:wait}#refresh{font-size:12px;flex:none;padding:7px 10px;color:var(--operator-text)}#disk-cleanup{background:var(--operator-soft);color:var(--operator-action)}#disk-cleanup:hover:not(:disabled){background:#303030}#disk-cleanup:active:not(:disabled){background:#383838}
+button:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--operator-accent);outline-offset:3px}
+.tabs{display:flex;gap:4px;border-top:1px solid var(--operator-border);padding-top:9px;margin:0 0 16px}.tab{min-width:0;flex:1;background:transparent;font-size:12px;padding:8px 3px;color:var(--operator-text)}.tab[aria-selected="true"]{background:var(--operator-surface);color:var(--operator-action);font-weight:700}
+.card{border:0;border-radius:12px;background:var(--operator-surface);padding:14px;margin-top:7px;box-shadow:none;min-width:0}.card h2{font-size:17px;line-height:1.3;margin:0 0 12px;font-weight:650;letter-spacing:-.2px}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:12px 0;border-top:1px solid var(--operator-border)}.row:first-of-type{border-top:0}.row:last-child{padding-bottom:0}.row>div{min-width:0}.name{font-size:14px;font-weight:650;overflow-wrap:anywhere}
+.pill,.status-badge{font-size:11px;font-weight:600;line-height:1.35;border-radius:7px;padding:4px 7px;background:#303030;color:var(--operator-muted);border:0;white-space:normal;max-width:132px;overflow-wrap:anywhere;flex-shrink:0}
+.ok{color:#79d2a6}.pill.ok,.status-badge.ok{background:#1f382b}.error,.reauth,.unavailable{color:#ff9da4}.pill.error,.pill.reauth,.pill.unavailable,.status-badge.error,.status-badge.reauth{background:#43262a}.limited,.unknown,.attention{color:#edc578}.pill.limited,.pill.unknown,.pill.attention,.status-badge.limited,.status-badge.unknown{background:#3c3220}.missing{color:var(--operator-muted)}
+.account{display:block;padding:14px 0;border-top:1px solid var(--operator-border)}.account:first-of-type{border-top:0}.account:last-child{padding-bottom:0}.account-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.account-head>div{min-width:0}.account-meta{display:flex;flex-wrap:wrap;gap:5px 10px;align-items:center;margin-top:4px}.account-meta .caption{margin-top:0}
+.bars{display:grid;gap:12px;margin-top:12px}.barline{display:grid;gap:6px;padding:0;min-width:0}.limit-head{display:flex;justify-content:space-between;gap:6px 10px;align-items:baseline;flex-wrap:wrap}.limit-title{font-size:12px;font-weight:650;color:var(--operator-text)}.limit-stats{font-size:12px;color:var(--operator-muted);font-variant-numeric:tabular-nums}.limit-stats strong{color:var(--operator-text);font-weight:650}.limit-note{margin-top:0}.bar{height:5px;background:#3d3d3d;border-radius:999px;overflow:hidden}.fill{height:100%;border-radius:inherit;background:var(--operator-accent)}#server-status .bar i{display:block;height:100%;background:var(--operator-accent);border-radius:inherit}
+.server-disk-head,.vpn-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.server-disk-head{font-size:13px;font-weight:600;margin:8px 0}.server-disk-details{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:10px;font-size:12px;color:var(--operator-muted)}.server-disk-details b{color:var(--operator-text);font-weight:600}.server-warning{margin-top:12px;padding:10px 12px;border-radius:12px;background:#3c3220;color:#edc578;font-size:12px;line-height:1.5}
+.vpn-profile{padding:12px 0;border-bottom:1px solid var(--operator-border)}.vpn-profile:last-of-type{border:0}.vpn-head .name{min-width:0}.vpn-head .pill{white-space:nowrap}.vpn-profile button{margin-top:10px;color:var(--operator-action);background:var(--operator-soft)}.vpn-profile button:hover:not(:disabled){background:#303030}.vpn-profile button:active:not(:disabled){background:#383838}.vpn-note{line-height:1.5;margin-top:12px}
+.remote-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.remote-title h2{min-width:0;overflow-wrap:anywhere}.remote-section{border-top:1px solid var(--operator-border);margin-top:14px;padding-top:12px}.remote-section h3{font-size:12px;color:var(--operator-muted);margin:0 0 8px;font-weight:600}.remote-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:12px}.metric{min-width:0;padding:12px;background:var(--operator-soft);border-radius:12px}.metric span{display:block;color:var(--operator-muted);font-size:11px}.metric strong{display:block;margin-top:4px;font-size:16px;font-weight:650;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.remote-limits{min-width:0;margin-top:12px}.remote-foot{margin-top:12px;color:var(--operator-muted);font-size:11px;line-height:1.5}
+.cron-job{border-top:1px solid var(--operator-border);padding-top:14px;margin-top:14px}.cron-job:first-of-type{border-top:0;margin-top:0;padding-top:0}.cron-editor{margin-top:10px;border:0;border-radius:12px;background:var(--operator-soft)}.cron-editor summary{min-height:44px;padding:12px;cursor:pointer;font-size:12px;font-weight:600;color:var(--operator-accent);overflow-wrap:anywhere}.cron-fields{display:grid;gap:16px;padding:4px 12px 14px}.cron-field{display:grid;gap:8px;min-width:0;font-size:13px}.cron-field select{width:100%;min-width:0;max-width:100%;min-height:44px;border-radius:12px;border:1px solid var(--operator-border);background:var(--operator-bg);color:var(--operator-text);padding:10px;font:inherit}.cron-range{width:100%;min-width:0;min-height:44px;margin:0;accent-color:var(--operator-accent);touch-action:pan-y}.cron-range:disabled{opacity:.5}.cron-value{color:var(--operator-accent);font-weight:650}.cron-hint{font-size:11px;color:var(--operator-muted);line-height:1.5;overflow-wrap:anywhere}.cron-save{justify-self:start;background:#356393;color:#fff;font-weight:600}.cron-save:hover:not(:disabled){background:#3b6c9e}.cron-save:active:not(:disabled){background:#335d88}.cron-message{font-size:12px;line-height:1.5;color:#79d2a6;min-height:16px;overflow-wrap:anywhere}.cron-message.error{color:#ff9da4}
+.cron-delete{background:#43262a;color:#ffadb3;min-height:44px}.cron-delete:hover:not(:disabled){background:#523037}.cron-delete:active:not(:disabled){background:#59343c}.cron-delete-action{margin-top:10px}
+.cron-delete-dialog,.vpn-dialog{color:var(--operator-text);background:var(--operator-surface);border:1px solid var(--operator-border);border-radius:16px;padding:20px;width:calc(100% - 28px);max-width:440px;max-height:calc(100dvh - 32px);overflow:auto;box-shadow:0 20px 60px #0008}.cron-delete-dialog::backdrop,.vpn-dialog::backdrop{background:#000b}.cron-delete-dialog h2,.vpn-dialog h2{margin:0 0 12px;font-size:21px;line-height:1.3;letter-spacing:-.4px}.cron-delete-dialog p{overflow-wrap:anywhere;line-height:1.5}.cron-delete-actions,.vpn-dialog-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px}.cron-delete-actions button,.vpn-dialog-actions button{flex:1;min-height:44px}.cron-delete-actions #cron-delete-cancel,.vpn-dialog-actions button{background:var(--operator-soft)}.vpn-dialog textarea{display:block;width:100%;min-height:116px;resize:vertical;background:var(--operator-bg);color:var(--operator-text);border:1px solid var(--operator-border);border-radius:12px;padding:10px;font:12px/1.5 ui-monospace,monospace;overflow-wrap:anywhere;margin:10px 0}
+[hidden],.hidden{display:none!important}pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;color:#ff9da4;font-size:12px}.footer{margin-top:22px;padding-top:12px;border-top:1px solid var(--operator-border);color:var(--operator-muted);font-size:11px;line-height:1.5}
+@media(max-width:360px){.title{font-size:26px}.card{padding:12px}.pill{max-width:105px}.remote-title{gap:8px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+/* Compact disclosure hierarchy: overview → provider/job → detail. */
+.compact-fold{min-width:0}.section-fold{padding:0}.fold-summary{display:flex;align-items:center;gap:10px;min-height:64px;padding:12px 14px;cursor:pointer;list-style:none;user-select:none}.fold-summary::-webkit-details-marker{display:none}.fold-summary::marker{content:''}.fold-text{min-width:0;flex:1}.fold-title{display:block;font-size:14px;font-weight:650;line-height:1.4;overflow-wrap:anywhere}.fold-caption{display:block;font-size:11px;line-height:1.5;color:var(--operator-muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fold-chevron{flex:none;font-size:23px;line-height:1;color:var(--operator-accent)}.compact-fold[open]>.fold-summary>.fold-chevron{transform:rotate(90deg)}.fold-summary:focus-visible{outline:2px solid var(--operator-accent);outline-offset:-3px;border-radius:12px}.fold-summary:hover{background:#ffffff05;border-radius:12px}.fold-summary>.pill,.fold-summary>.status-badge{max-width:105px;font-size:10px}.fold-body{padding:0 14px 14px}.fold-body>.card{background:transparent;padding:0;margin:0;border:0;box-shadow:none}.fold-body>.card>h2,.fold-body>.card>.remote-title{display:none}.nested-fold{border-top:1px solid var(--operator-border)}.nested-fold>.fold-summary{min-height:58px;padding:10px 0}.nested-fold>.fold-body{padding:0 0 12px}.nested-fold .fold-title{font-size:13px}.nested-fold .fold-caption{font-size:11px}.fold-body>.account{border:0;padding:0}.fold-body>.account .account-head .name,.fold-body>.account .account-meta .status-badge{display:none}.fold-body>.account .account-meta{margin-top:0}.fold-body>.cron-job{border:0;padding:0;margin:0}.fold-body>.cron-job>.row{padding:0 0 10px;border:0}.fold-body>.cron-job>.row .name,.fold-body>.cron-job>.row>.pill{display:none}.section-fold[open]>.fold-summary{margin-bottom:2px}.compact-fold:not([open])>.fold-body{display:none}.remote-section:first-of-type{margin-top:0;padding-top:0;border:0}.intro{margin-bottom:12px}.title{margin-top:18px}.footer{margin-top:16px}
+.fold-warning .fold-caption{color:#ffd27f}.compact-list{max-height:min(50vh,380px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#4a4a4a transparent}.compact-list:focus-visible{outline:2px solid var(--operator-accent);outline-offset:2px}.nested-fold[data-fold-group="providers"]>.fold-body{padding-left:12px;border-left:1px solid var(--operator-border);margin-left:2px}.fold-body>.card>.caption{padding-bottom:10px;margin-top:0}
+/* Direct subscription micro dashboards: no hidden quota/reset fields. */
+.subscription-dashboard{max-height:min(62vh,480px);padding-right:2px}.micro-group{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--operator-muted);padding:9px 0 7px}.micro-group:first-child{padding-top:2px}.subscription-micro{background:var(--operator-soft);border-radius:10px;padding:10px;margin:0 0 7px;min-width:0}.micro-head{display:flex;align-items:flex-start;gap:9px}.micro-labels{min-width:0;flex:1}.micro-provider{font-size:10px;color:var(--operator-muted);margin-bottom:3px;overflow-wrap:anywhere}.micro-name{font-size:13px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}.micro-head>.status-badge{flex-shrink:0;font-size:10px;line-height:1.35;white-space:nowrap;margin:0}.micro-resets{font-size:11px;color:var(--operator-muted);margin:7px 0 0}.micro-windows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px;margin-top:10px}.micro-window{min-width:0}.micro-window-label{font-size:11px;color:var(--operator-muted);overflow-wrap:anywhere}.micro-value{font-size:12px;font-weight:600;line-height:1.4;margin:3px 0 5px;overflow-wrap:anywhere}.micro-bar{height:4px;background:#414141;border-radius:3px;overflow:hidden}.micro-fill{display:block;height:100%;background:var(--operator-accent)}.micro-fill.warn{background:#ffd27f}.micro-fill.danger{background:#ff9d9d}.micro-unknown{background:#373737}.micro-reset{font-size:11px;line-height:1.4;color:#c4c4c4;margin-top:5px;overflow-wrap:anywhere}.micro-scroll-hint{font-size:10px;color:var(--operator-muted);line-height:1.4;margin-top:7px}.micro-note{font-size:11px;line-height:1.45;color:var(--operator-muted);margin-top:8px;overflow-wrap:anywhere;white-space:pre-wrap}
+
 </style></head>
-<body><main class="wrap"><div class="top"><div><div id="verified" class="eyebrow">Проверяю Telegram…</div><h1 class="title">Hermes Operator</h1><div class="muted small">Сервисы, подписки, cron</div></div><button id="refresh" type="button">Обновить</button></div><p id="cron-feedback" class="muted small" role="status" hidden></p><div id="error" class="card hidden"><b>Ошибка доступа</b><pre id="errtext"></pre></div><div id="content"><div class="card muted">Загружаю…</div></div><div class="footer">Данные без токенов и секретов</div></main>
+<body><main class="wrap"><header class="top"><div class="brand">H / OPERATOR</div><button id="refresh" type="button">Обновить</button></header><div class="intro"><h1 class="title">Hermes Operator</h1><div class="muted small">Сервисы, подписки и задачи</div><div id="verified" class="eyebrow" role="status">Проверяю Telegram…</div></div><p id="cron-feedback" class="muted small" role="status" hidden></p><div id="error" class="card hidden"><b>Ошибка доступа</b><pre id="errtext"></pre></div><div id="content"><div class="card muted">Загружаю…</div></div><div class="footer">Данные без токенов и секретов</div></main>
 <dialog id="cron-delete-dialog" class="cron-delete-dialog" aria-labelledby="cron-delete-title" aria-describedby="cron-delete-name">
 <h2 id="cron-delete-title">Вы уверены что хотите удалить</h2>
 <p id="cron-delete-name"></p><p class="muted small">Будущие запуски этой задачи будут отменены. Восстановить её из интерфейса нельзя.</p>
@@ -1276,6 +1303,134 @@ async function load(refresh=false){
  }finally{if(isCurrent())setRefreshState(false)}
 }
 $('refresh').addEventListener('click',(event)=>{event.preventDefault(); load(true)}); load(false);
+</script><script>
+/* Presentation-only progressive disclosure. No requests or persisted state. */
+(()=>{
+ const node=(tag,cls,text)=>{const el=document.createElement(tag);if(cls)el.className=cls;if(text!=null)el.textContent=text;return el};
+ const text=(el,selector)=>el.querySelector(selector)?.textContent.trim()||'';
+ function fold(element,{key,title,caption='',badge=null,group='',root=false,warning=false}){
+  const details=node('details',`compact-fold ${root?'card section-fold':'nested-fold'}`);
+  details.dataset.foldKey=key;
+  if(group){details.dataset.foldGroup=group;details.setAttribute('name','operator-'+group)}
+  const summary=node('summary','fold-summary');summary.classList.toggle('fold-warning',warning);
+  const labels=node('span','fold-text');labels.append(node('span','fold-title',title));
+  const sub=node('span','fold-caption',caption);labels.append(sub);summary.append(labels);
+  if(badge)summary.append(badge.cloneNode(true));
+  const arrow=node('span','fold-chevron','›');arrow.setAttribute('aria-hidden','true');summary.append(arrow);
+  const body=node('div','fold-body');
+  if(element.parentNode)element.before(details);
+  body.append(element);details.append(summary,body);return details;
+ }
+ function attention(items){return items.filter(x=>!['ok','active','available','connected','running'].includes(String(x.status||'unknown').toLowerCase())).length}
+ function countCaption(items,label,n=attention(items)){return `${label}: ${items.length}${n?' · требуют внимания: '+n:''}`}
+ function attentionCount(s){return Number.isInteger(s.attention_accounts)&&s.attention_accounts>=0?s.attention_accounts:attention(s.accounts||[])}
+ function listFor(elements,label){const list=node('div','compact-list');list.setAttribute('role','region');list.setAttribute('aria-label',label);if(elements.length>6)list.tabIndex=0;if(elements.length)elements[0].before(list);elements.forEach(el=>list.append(el));return list}
+ function diskCaption(){const card=document.getElementById('server-status');if(!card)return '';const free=text(card,'.server-disk-details span:nth-child(2)');const used=text(card,'.server-disk-head span:last-child');return free?`${free}${used?' · занято '+used:''}`:'Данные диска недоступны'}
+ function syncDiskSummary(){
+  const card=document.getElementById('server-status'),box=card?.closest('[data-fold-key="server"]');
+  if(!box)return;
+  const caption=box.querySelector(':scope > summary .fold-caption');
+  const value=(card.querySelector('.server-warning')?'Мало места · ':'')+diskCaption();
+  if(caption.textContent!==value)caption.textContent=value;
+  box.querySelector(':scope > summary').classList.toggle('fold-warning',!!card.querySelector('.server-warning'));
+ }
+ function quotaNumber(value){
+  if(value==null||value===''||typeof value==='boolean')return null;
+  const n=Number(value);return Number.isFinite(n)&&n>=0&&n<=100?n:null;
+ }
+ const quotaText=n=>n.toLocaleString('ru-RU',{maximumFractionDigits:1})+'%';
+ function accountActive(a,s){return !s.error&&a.available!==false&&['ok','active','available','connected'].includes(String(a.status||'unknown').toLowerCase())}
+ function microCard(s,a){
+  const card=node('article','subscription-micro');card.dataset.microProvider=s.id||s.label||'subscription';
+  const active=a&&accountActive(a,s);card.dataset.microActive=String(!!active);
+  const head=node('div','micro-head'),labels=node('div','micro-labels');
+  labels.append(node('div','micro-provider',[s.label||s.id||'Подписка',a?.plan].filter(Boolean).join(' · ')));
+  labels.append(node('div','micro-name',a?.label||(s.error?'Ошибка получения данных':'Нет данных')));
+  const status=String(a?.status||'unknown').toLowerCase();
+  const state=active?'Активна':s.error?'Ошибка':({limited:'Ограничена',reauth:'Нужен вход',missing:'Нет доступа',error:'Ошибка',failed:'Ошибка'})[status]||'Нет данных';
+  head.append(labels,node('span','status-badge '+(active?'ok':s.error||['error','failed','reauth'].includes(status)?'error':'limited'),state));card.append(head);
+  if(!a){card.append(node('div','micro-note',s.error||'Аккаунты не получены. Нет данных.'));return card}
+  card.dataset.microAccount=a.id||a.label||'';
+  const rawBank=a.reset_bank;
+  const bank=rawBank!=null&&rawBank!==''&&typeof rawBank!=='boolean'?Number(rawBank):NaN;
+  const resets=node('div','micro-resets',Number.isInteger(bank)&&bank>=0?'Ресеты: '+bank:a.reset_bank_text||'Ресеты: нет данных');
+  if(a.reset_bank_text)resets.title=a.reset_bank_text;
+  card.append(resets);
+  const windows=node('div','micro-windows');
+  for(const w of a.windows||[]){
+   const tile=node('div','micro-window');const used=quotaNumber(w.used_percent),left=quotaNumber(w.remaining_percent);
+   const label=w.label||w.key||'Лимит';tile.append(node('div','micro-window-label',label));
+   tile.append(node('div','micro-value',left!=null?quotaText(left)+' осталось':used!=null?quotaText(used)+' использовано':'Нет данных'));
+   const bar=node('div','micro-bar');bar.setAttribute('aria-label',label+': '+(used!=null?'использовано '+quotaText(used):'Нет данных'));
+   if(used!=null){bar.setAttribute('role','progressbar');bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');bar.setAttribute('aria-valuenow',String(used));const fill=node('span',used>=95?'micro-fill danger':used>=80?'micro-fill warn':'micro-fill');fill.style.width=used+'%';bar.append(fill)}
+   else bar.classList.add('micro-unknown');
+   tile.append(bar,node('div','micro-reset',w.reset_text||'Сброс: нет данных'));windows.append(tile);
+  }
+  if((a.windows||[]).length)card.append(windows);else card.append(node('div','micro-note','Лимиты: нет данных'));
+  if(a.message)card.append(node('div','micro-note',a.message));
+  return card;
+ }
+ function subscriptionDashboard(subscriptions){
+  const listing=node('div','compact-list subscription-dashboard');listing.setAttribute('role','region');listing.setAttribute('aria-label','Все подписки и лимиты');listing.tabIndex=0;
+  const rows=[];for(const s of subscriptions){for(const a of s.accounts||[])rows.push({s,a,active:accountActive(a,s)});if(s.error||!(s.accounts||[]).length)rows.push({s,a:null,active:false})}
+  rows.sort((a,b)=>Number(b.active)-Number(a.active));
+  const activeCount=rows.filter(row=>row.active).length;
+  let previous=null;for(const row of rows){if(previous!==row.active){listing.append(node('div','micro-group',row.active?'Активные · '+activeCount:'Требуют внимания · '+(rows.length-activeCount)));previous=row.active}listing.append(microCard(row.s,row.a))}
+  if(!rows.length)listing.append(node('div','micro-note','Трекеры подписок не настроены.'));
+  return listing;
+ }
+ const originalRender=render;
+ render=function(data){
+  // Existing loader clears private DOM on identity changes/errors. Open state
+  // is read only from that DOM, so it cannot survive an account boundary.
+  const opened=new Set([...document.querySelectorAll('.compact-fold[open], [data-cron-editor][open]')].map(el=>el.dataset.foldKey||'editor:'+el.dataset.jobId));
+  originalRender(data);
+  const content=document.getElementById('content');
+  const sections=[...content.children].filter(el=>el.tagName==='SECTION');
+  const server=content.querySelector('#server-status');
+  if(server)fold(server,{key:'server',title:'Сервер',caption:diskCaption(),group:'overview',root:true});
+  const vpn=content.querySelector('#vpn-status');
+  if(vpn)fold(vpn,{key:'vpn',title:'VPN',caption:countCaption(data.vpn?.profiles||[],'Профили'),warning:attention(data.vpn?.profiles||[])>0,group:'overview',root:true});
+  const services=sections.find(el=>text(el,'h2')==='Подключённые сервисы');
+  if(services)fold(services,{key:'services',title:'Сервисы',caption:countCaption(data.services||[],'Подключения'),warning:attention(data.services||[])>0,group:'overview',root:true});
+  const cron=sections.find(el=>text(el,'h2')==='Cron-задачи');
+  const subscriptions=sections.filter(el=>el!==server&&el!==vpn&&el!==services&&el!==cron);
+  if(subscriptions.length){
+   const holder=node('div','subscription-list');subscriptions[0].before(holder);
+   const accounts=(data.subscriptions||[]).flatMap(s=>s.accounts||[]);
+   const n=(data.subscriptions||[]).reduce((total,s)=>total+attentionCount(s),0);
+   const failed=(data.subscriptions||[]).filter(s=>s.error).length;
+   fold(holder,{key:'subscriptions',title:'Подписки',caption:(failed?'Ошибки трекеров: '+failed+' · ':'')+countCaption(accounts,'Аккаунты',n),warning:n>0||failed>0,group:'overview',root:true});
+   holder.append(subscriptionDashboard(data.subscriptions||[]));
+   if(accounts.length>3)holder.append(node('div','micro-scroll-hint','Прокрутите список, чтобы увидеть остальные подписки'));
+   subscriptions.forEach(card=>card.remove());
+  }
+  if(cron){
+   const jobs=[...cron.querySelectorAll('.cron-job')];listFor(jobs,'Список задач');
+   jobs.forEach((job,i)=>{
+    const j=(data.cron_jobs||[])[i]||{};
+    fold(job,{key:'job:'+j.id,title:j.name||j.id||'Задача',caption:j.schedule_display||j.schedule||'Без расписания',badge:job.querySelector('.row > .pill'),group:'jobs'});
+   });
+   fold(cron,{key:'cron',title:'Задачи',caption:`Всего: ${(data.cron_jobs||[]).length}`,group:'overview',root:true});
+  }
+  const connected=document.getElementById('connected-content');
+  if(connected)[...connected.children].forEach((card,i)=>{
+   const u=(data.connected_users||[])[i];if(!u)return;
+   const caption=card.querySelector('.remote-section .caption')?.textContent|| (u.status==='unavailable'?'Диагностика недоступна':'Сервер и профиль');
+   fold(card,{key:'remote:'+(u.id||u.label||i),title:u.label||'Подключение',caption:(u.profile?.stale?'Данные устарели · ':'')+caption,badge:card.querySelector('.remote-title .pill'),warning:u.profile?.stale||u.status!=='ok',group:'peers',root:true});
+  });
+  document.querySelectorAll('.compact-fold,[data-cron-editor]').forEach(el=>{const key=el.dataset.foldKey||'editor:'+el.dataset.jobId;if(opened.has(key))el.open=true});
+  syncDiskSummary();
+ };
+ // Native exclusive details names have this fallback for older WebViews.
+ document.addEventListener('toggle',event=>{
+  const item=event.target;if(!item.matches?.('.compact-fold[open]')||!item.dataset.foldGroup)return;
+  [...item.parentElement.children].forEach(other=>{if(other!==item&&other.dataset.foldGroup===item.dataset.foldGroup)other.open=false});
+ },true);
+ // Cleanup replaces only its inner server card; keep the compact summary live.
+ const originalServerCard=serverCard;
+ serverCard=function(...args){const html=originalServerCard(...args);queueMicrotask(syncDiskSummary);return html};
+})();
 </script></body></html>"""
 
 

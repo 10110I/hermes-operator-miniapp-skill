@@ -15,6 +15,16 @@ Cron writes are authenticated separately with `cron.edit_allowed_users` (inherit
 
 It is based on a real Hermes operator panel, but the subscription tracking was redesigned so users are not locked to one provider such as `openai-codex`.
 
+## Operator visual style
+
+The interface follows the owner-selected dark Telegram presentation of @Stavkaposting1bot: near-black #0f0f0f canvas, flat #212121 cards without outlines, restrained light-blue accents, system typography, 12px control radii and compact 7px card gaps. The header pairs a small tracked brand with the refresh action, followed by a 28px title. Quota bars stay thin and inline rather than adding nested pale panels. It remains dark in light and dark clients; missing data, warnings, permissions and all existing status, quota, cron and private-link flows remain unchanged. The previous light interpretation was rejected and is not the visual contract.
+
+The layout is capped at 600px, supports 320px screens, respects Telegram/device safe areas, keeps controls at least 44px high and provides visible keyboard focus. Connected-user and cleanup elements in customized installations share the same tokens without requiring any server-side behavior replacement. Deploy UI-only edits selectively; never overwrite a customized runtime with a clean package script.
+
+The overview uses five compact native disclosures: server, VPN, services, subscriptions and tasks. Only one main section is expanded at a time. Opening subscriptions immediately shows every account across providers as a compact dashboard, with active accounts first, followed by those needing attention; no additional provider/account disclosures are required. Each dashboard shows all available quota windows, reset times and reset credits, distinguishing missing data from real zeros. Failed/empty trackers remain visible. Individual jobs and connected-user snapshots still expand on demand; warnings remain in the closed summaries. Account/job lists have bounded, keyboard-scrollable regions, so a large inventory does not create a page-length list. Collapsing a section keeps unsaved fields intact. Same-identity refresh preserves the disclosure selection; identity changes clear private contents and disclosure state. This is an additive client-only layer: existing renderers, authenticated API calls and backend code are unchanged.
+
+Presentation checks: `pytest -q tests/test_ui_redesign.py`; browser: `python tests/browser_ui_redesign.py scripts/operator_miniapp_status.py`, `python tests/browser_compact_ui.py scripts/operator_miniapp_status.py` and `python tests/browser_subscription_dashboard.py scripts/operator_miniapp_status.py` (requires Playwright Chromium). The compactness regression covers 40 jobs and 27 accounts at 320/390/1280px, keyboard-scrollable list bounds, field retention and identity clearing. Existing `browser_server_vpn.py` and `browser_cron_editor.py` remain behavioral regression gates. Run the same browser checks against a customized candidate before rollout; connected-user coverage is exercised when that runtime supplies the tab.
+
 ## Install paths
 
 There are two supported public install paths today:
