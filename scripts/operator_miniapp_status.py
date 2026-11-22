@@ -1321,6 +1321,7 @@ $('refresh').addEventListener('click',(event)=>{event.preventDefault(); load(tru
  function attention(items){return items.filter(x=>!['ok','active','available','connected','running'].includes(String(x.status||'unknown').toLowerCase())).length}
  function countCaption(items,label,n=attention(items)){return `${label}: ${items.length}${n?' · требуют внимания: '+n:''}`}
  function attentionCount(s){return Number.isInteger(s.attention_accounts)&&s.attention_accounts>=0?s.attention_accounts:attention(s.accounts||[])}
+ function providerCaption(s){if(s.error)return 'Ошибка получения данных';return typeof s.available_accounts==='number'?`Доступно: ${s.available_accounts} из ${(s.accounts||[]).length}${attentionCount(s)?' · внимание: '+attentionCount(s):''}`:countCaption(s.accounts||[],'Аккаунты',attentionCount(s))}
  function listFor(elements,label){const list=node('div','compact-list');list.setAttribute('role','region');list.setAttribute('aria-label',label);if(elements.length>6)list.tabIndex=0;if(elements.length)elements[0].before(list);elements.forEach(el=>list.append(el));return list}
  function diskCaption(){const card=document.getElementById('server-status');if(!card)return '';const free=text(card,'.server-disk-details span:nth-child(2)');const used=text(card,'.server-disk-head span:last-child');return free?`${free}${used?' · занято '+used:''}`:'Данные диска недоступны'}
  function syncDiskSummary(){
@@ -1359,10 +1360,11 @@ $('refresh').addEventListener('click',(event)=>{event.preventDefault(); load(tru
    const holder=node('div','subscription-list');subscriptions[0].before(holder);
    const accounts=(data.subscriptions||[]).flatMap(s=>s.accounts||[]);
    const n=(data.subscriptions||[]).reduce((total,s)=>total+attentionCount(s),0);
-   fold(holder,{key:'subscriptions',title:'Подписки',caption:countCaption(accounts,'Аккаунты',n),warning:n>0,group:'overview',root:true});
+   const failed=(data.subscriptions||[]).filter(s=>s.error).length;
+   fold(holder,{key:'subscriptions',title:'Подписки',caption:(failed?'Ошибки трекеров: '+failed+' · ':'')+countCaption(accounts,'Аккаунты',n),warning:n>0||failed>0,group:'overview',root:true});
    subscriptions.forEach((card,i)=>{
     const s=(data.subscriptions||[])[i];holder.append(card);
-    if(s){const key=s.id||s.label||i;nestAccounts(card,s,key);fold(card,{key:'provider:'+key,title:s.label||s.id||'Подписка',caption:typeof s.available_accounts==='number'?`Доступно: ${s.available_accounts} из ${(s.accounts||[]).length}${attentionCount(s)?' · внимание: '+attentionCount(s):''}`:countCaption(s.accounts||[],'Аккаунты',attentionCount(s)),warning:attentionCount(s)>0,group:'providers'})}
+    if(s){const key=s.id||s.label||i;nestAccounts(card,s,key);fold(card,{key:'provider:'+key,title:s.label||s.id||'Подписка',caption:providerCaption(s),warning:!!s.error||attentionCount(s)>0,group:'providers'})}
    });
   }
   if(cron){

@@ -84,6 +84,18 @@ with sync_playwright()as pw:
  p.evaluate('window.Telegram.WebApp.initData="synthetic-b"')
  assert p.evaluate('load(true)')is True
  assert roots.evaluate_all('els=>els.every(e=>!e.open)')
+ # An unavailable tracker must warn at both closed levels, even with zero accounts.
+ fixture['subscriptions']=[{'id':'failed','label':'Трекер','error':'Tracker failed','accounts':[],'attention_accounts':0,'available_accounts':0}]
+ assert p.evaluate('load(true)')is True
+ failed_root=p.locator('[data-fold-key="subscriptions"]')
+ expect(failed_root.locator(':scope > summary.fold-warning')).to_contain_text('Ошибки трекеров: 1')
+ assert not failed_root.evaluate('e=>e.open')
+ failed_root.locator(':scope > summary').click()
+ failed_provider=p.locator('[data-fold-key="provider:failed"]')
+ expect(failed_provider.locator(':scope > summary.fold-warning')).to_contain_text('Ошибка получения данных')
+ assert not failed_provider.evaluate('e=>e.open')
+ failed_provider.locator(':scope > summary').click()
+ expect(failed_provider).to_contain_text('Tracker failed')
  p.evaluate('window.Telegram.WebApp.initData="invalid";load(true)')
  expect(p.locator('#error')).to_be_visible()
  assert p.locator('#content').inner_text()==''
