@@ -1124,6 +1124,9 @@ button:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visi
 /* Compact disclosure hierarchy: overview → provider/job → detail. */
 .compact-fold{min-width:0}.section-fold{padding:0}.fold-summary{display:flex;align-items:center;gap:10px;min-height:64px;padding:12px 14px;cursor:pointer;list-style:none;user-select:none}.fold-summary::-webkit-details-marker{display:none}.fold-summary::marker{content:''}.fold-text{min-width:0;flex:1}.fold-title{display:block;font-size:14px;font-weight:650;line-height:1.4;overflow-wrap:anywhere}.fold-caption{display:block;font-size:11px;line-height:1.5;color:var(--operator-muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fold-chevron{flex:none;font-size:23px;line-height:1;color:var(--operator-accent)}.compact-fold[open]>.fold-summary>.fold-chevron{transform:rotate(90deg)}.fold-summary:focus-visible{outline:2px solid var(--operator-accent);outline-offset:-3px;border-radius:12px}.fold-summary:hover{background:#ffffff05;border-radius:12px}.fold-summary>.pill,.fold-summary>.status-badge{max-width:105px;font-size:10px}.fold-body{padding:0 14px 14px}.fold-body>.card{background:transparent;padding:0;margin:0;border:0;box-shadow:none}.fold-body>.card>h2,.fold-body>.card>.remote-title{display:none}.nested-fold{border-top:1px solid var(--operator-border)}.nested-fold>.fold-summary{min-height:58px;padding:10px 0}.nested-fold>.fold-body{padding:0 0 12px}.nested-fold .fold-title{font-size:13px}.nested-fold .fold-caption{font-size:11px}.fold-body>.account{border:0;padding:0}.fold-body>.account .account-head .name,.fold-body>.account .account-meta .status-badge{display:none}.fold-body>.account .account-meta{margin-top:0}.fold-body>.cron-job{border:0;padding:0;margin:0}.fold-body>.cron-job>.row{padding:0 0 10px;border:0}.fold-body>.cron-job>.row .name,.fold-body>.cron-job>.row>.pill{display:none}.section-fold[open]>.fold-summary{margin-bottom:2px}.compact-fold:not([open])>.fold-body{display:none}.remote-section:first-of-type{margin-top:0;padding-top:0;border:0}.intro{margin-bottom:12px}.title{margin-top:18px}.footer{margin-top:16px}
 .fold-warning .fold-caption{color:#ffd27f}.compact-list{max-height:min(50vh,380px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#4a4a4a transparent}.compact-list:focus-visible{outline:2px solid var(--operator-accent);outline-offset:2px}.nested-fold[data-fold-group="providers"]>.fold-body{padding-left:12px;border-left:1px solid var(--operator-border);margin-left:2px}.fold-body>.card>.caption{padding-bottom:10px;margin-top:0}
+/* Direct subscription micro dashboards: no hidden quota/reset fields. */
+.subscription-dashboard{max-height:min(62vh,480px);padding-right:2px}.micro-group{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--operator-muted);padding:9px 0 7px}.micro-group:first-child{padding-top:2px}.subscription-micro{background:var(--operator-soft);border-radius:10px;padding:10px;margin:0 0 7px;min-width:0}.micro-head{display:flex;align-items:flex-start;gap:9px}.micro-labels{min-width:0;flex:1}.micro-provider{font-size:10px;color:var(--operator-muted);margin-bottom:3px;overflow-wrap:anywhere}.micro-name{font-size:13px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}.micro-head>.status-badge{flex-shrink:0;font-size:10px;line-height:1.35;white-space:nowrap;margin:0}.micro-resets{font-size:11px;color:var(--operator-muted);margin:7px 0 0}.micro-windows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px;margin-top:10px}.micro-window{min-width:0}.micro-window-label{font-size:11px;color:var(--operator-muted);overflow-wrap:anywhere}.micro-value{font-size:12px;font-weight:600;line-height:1.4;margin:3px 0 5px;overflow-wrap:anywhere}.micro-bar{height:4px;background:#414141;border-radius:3px;overflow:hidden}.micro-fill{display:block;height:100%;background:var(--operator-accent)}.micro-fill.warn{background:#ffd27f}.micro-fill.danger{background:#ff9d9d}.micro-unknown{background:#373737}.micro-reset{font-size:11px;line-height:1.4;color:#c4c4c4;margin-top:5px;overflow-wrap:anywhere}.micro-scroll-hint{font-size:10px;color:var(--operator-muted);line-height:1.4;margin-top:7px}.micro-note{font-size:11px;line-height:1.45;color:var(--operator-muted);margin-top:8px;overflow-wrap:anywhere;white-space:pre-wrap}
+
 </style></head>
 <body><main class="wrap"><header class="top"><div class="brand">H / OPERATOR</div><button id="refresh" type="button">Обновить</button></header><div class="intro"><h1 class="title">Hermes Operator</h1><div class="muted small">Сервисы, подписки и задачи</div><div id="verified" class="eyebrow" role="status">Проверяю Telegram…</div></div><p id="cron-feedback" class="muted small" role="status" hidden></p><div id="error" class="card hidden"><b>Ошибка доступа</b><pre id="errtext"></pre></div><div id="content"><div class="card muted">Загружаю…</div></div><div class="footer">Данные без токенов и секретов</div></main>
 <dialog id="cron-delete-dialog" class="cron-delete-dialog" aria-labelledby="cron-delete-title" aria-describedby="cron-delete-name">
@@ -1321,7 +1324,6 @@ $('refresh').addEventListener('click',(event)=>{event.preventDefault(); load(tru
  function attention(items){return items.filter(x=>!['ok','active','available','connected','running'].includes(String(x.status||'unknown').toLowerCase())).length}
  function countCaption(items,label,n=attention(items)){return `${label}: ${items.length}${n?' · требуют внимания: '+n:''}`}
  function attentionCount(s){return Number.isInteger(s.attention_accounts)&&s.attention_accounts>=0?s.attention_accounts:attention(s.accounts||[])}
- function providerCaption(s){if(s.error)return 'Ошибка получения данных';return typeof s.available_accounts==='number'?`Доступно: ${s.available_accounts} из ${(s.accounts||[]).length}${attentionCount(s)?' · внимание: '+attentionCount(s):''}`:countCaption(s.accounts||[],'Аккаунты',attentionCount(s))}
  function listFor(elements,label){const list=node('div','compact-list');list.setAttribute('role','region');list.setAttribute('aria-label',label);if(elements.length>6)list.tabIndex=0;if(elements.length)elements[0].before(list);elements.forEach(el=>list.append(el));return list}
  function diskCaption(){const card=document.getElementById('server-status');if(!card)return '';const free=text(card,'.server-disk-details span:nth-child(2)');const used=text(card,'.server-disk-head span:last-child');return free?`${free}${used?' · занято '+used:''}`:'Данные диска недоступны'}
  function syncDiskSummary(){
@@ -1332,13 +1334,50 @@ $('refresh').addEventListener('click',(event)=>{event.preventDefault(); load(tru
   if(caption.textContent!==value)caption.textContent=value;
   box.querySelector(':scope > summary').classList.toggle('fold-warning',!!card.querySelector('.server-warning'));
  }
- function nestAccounts(card,subscription,index){
-  const accounts=[...card.querySelectorAll('.account')];listFor(accounts,'Аккаунты провайдера');
-  accounts.forEach((account,j)=>{
-   const a=(subscription.accounts||[])[j]||{};
-   const windows=(a.windows||[]).slice(0,2).map(w=>typeof w.remaining_percent==='number'&&Number.isFinite(w.remaining_percent)?`${w.label||'Лимит'}: ${Math.round(w.remaining_percent)}% осталось`:null).filter(Boolean);
-   fold(account,{key:`account:${index}:${a.id||a.label||j}`,title:text(account,'.name')||'Аккаунт',caption:[a.plan,...windows].filter(Boolean).join(' · '),badge:account.querySelector('.status-badge'),group:`accounts:${index}`});
-  });
+ function quotaNumber(value){
+  if(value==null||value===''||typeof value==='boolean')return null;
+  const n=Number(value);return Number.isFinite(n)&&n>=0&&n<=100?n:null;
+ }
+ const quotaText=n=>n.toLocaleString('ru-RU',{maximumFractionDigits:1})+'%';
+ function accountActive(a,s){return !s.error&&a.available!==false&&['ok','active','available','connected'].includes(String(a.status||'unknown').toLowerCase())}
+ function microCard(s,a){
+  const card=node('article','subscription-micro');card.dataset.microProvider=s.id||s.label||'subscription';
+  const active=a&&accountActive(a,s);card.dataset.microActive=String(!!active);
+  const head=node('div','micro-head'),labels=node('div','micro-labels');
+  labels.append(node('div','micro-provider',[s.label||s.id||'Подписка',a?.plan].filter(Boolean).join(' · ')));
+  labels.append(node('div','micro-name',a?.label||(s.error?'Ошибка получения данных':'Нет данных')));
+  const status=String(a?.status||'unknown').toLowerCase();
+  const state=active?'Активна':s.error?'Ошибка':({limited:'Ограничена',reauth:'Нужен вход',missing:'Нет доступа',error:'Ошибка',failed:'Ошибка'})[status]||'Нет данных';
+  head.append(labels,node('span','status-badge '+(active?'ok':s.error||['error','failed','reauth'].includes(status)?'error':'limited'),state));card.append(head);
+  if(!a){card.append(node('div','micro-note',s.error||'Аккаунты не получены. Нет данных.'));return card}
+  card.dataset.microAccount=a.id||a.label||'';
+  const rawBank=a.reset_bank;
+  const bank=rawBank!=null&&rawBank!==''&&typeof rawBank!=='boolean'?Number(rawBank):NaN;
+  const resets=node('div','micro-resets',Number.isInteger(bank)&&bank>=0?'Ресеты: '+bank:a.reset_bank_text||'Ресеты: нет данных');
+  if(a.reset_bank_text)resets.title=a.reset_bank_text;
+  card.append(resets);
+  const windows=node('div','micro-windows');
+  for(const w of a.windows||[]){
+   const tile=node('div','micro-window');const used=quotaNumber(w.used_percent),left=quotaNumber(w.remaining_percent);
+   const label=w.label||w.key||'Лимит';tile.append(node('div','micro-window-label',label));
+   tile.append(node('div','micro-value',left!=null?quotaText(left)+' осталось':used!=null?quotaText(used)+' использовано':'Нет данных'));
+   const bar=node('div','micro-bar');bar.setAttribute('aria-label',label+': '+(used!=null?'использовано '+quotaText(used):'Нет данных'));
+   if(used!=null){bar.setAttribute('role','progressbar');bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');bar.setAttribute('aria-valuenow',String(used));const fill=node('span',used>=95?'micro-fill danger':used>=80?'micro-fill warn':'micro-fill');fill.style.width=used+'%';bar.append(fill)}
+   else bar.classList.add('micro-unknown');
+   tile.append(bar,node('div','micro-reset',w.reset_text||'Сброс: нет данных'));windows.append(tile);
+  }
+  if((a.windows||[]).length)card.append(windows);else card.append(node('div','micro-note','Лимиты: нет данных'));
+  if(a.message)card.append(node('div','micro-note',a.message));
+  return card;
+ }
+ function subscriptionDashboard(subscriptions){
+  const listing=node('div','compact-list subscription-dashboard');listing.setAttribute('role','region');listing.setAttribute('aria-label','Все подписки и лимиты');listing.tabIndex=0;
+  const rows=[];for(const s of subscriptions){for(const a of s.accounts||[])rows.push({s,a,active:accountActive(a,s)});if(s.error||!(s.accounts||[]).length)rows.push({s,a:null,active:false})}
+  rows.sort((a,b)=>Number(b.active)-Number(a.active));
+  const activeCount=rows.filter(row=>row.active).length;
+  let previous=null;for(const row of rows){if(previous!==row.active){listing.append(node('div','micro-group',row.active?'Активные · '+activeCount:'Требуют внимания · '+(rows.length-activeCount)));previous=row.active}listing.append(microCard(row.s,row.a))}
+  if(!rows.length)listing.append(node('div','micro-note','Трекеры подписок не настроены.'));
+  return listing;
  }
  const originalRender=render;
  render=function(data){
@@ -1362,10 +1401,9 @@ $('refresh').addEventListener('click',(event)=>{event.preventDefault(); load(tru
    const n=(data.subscriptions||[]).reduce((total,s)=>total+attentionCount(s),0);
    const failed=(data.subscriptions||[]).filter(s=>s.error).length;
    fold(holder,{key:'subscriptions',title:'Подписки',caption:(failed?'Ошибки трекеров: '+failed+' · ':'')+countCaption(accounts,'Аккаунты',n),warning:n>0||failed>0,group:'overview',root:true});
-   subscriptions.forEach((card,i)=>{
-    const s=(data.subscriptions||[])[i];holder.append(card);
-    if(s){const key=s.id||s.label||i;nestAccounts(card,s,key);fold(card,{key:'provider:'+key,title:s.label||s.id||'Подписка',caption:providerCaption(s),warning:!!s.error||attentionCount(s)>0,group:'providers'})}
-   });
+   holder.append(subscriptionDashboard(data.subscriptions||[]));
+   if(accounts.length>3)holder.append(node('div','micro-scroll-hint','Прокрутите список, чтобы увидеть остальные подписки'));
+   subscriptions.forEach(card=>card.remove());
   }
   if(cron){
    const jobs=[...cron.querySelectorAll('.cron-job')];listFor(jobs,'Список задач');
